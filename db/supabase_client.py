@@ -72,6 +72,25 @@ class SupabaseManager:
             for row in response.data
         ]
 
+    async def get_class_by_number(self, class_number: int) -> Optional[str]:
+        """Get class_id from class_number. Returns None if not found."""
+        response = (
+            self.client.table("classes")
+            .select("*")
+            .eq("class_number", class_number)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+        
+        if response.data:
+            row = response.data[0]
+            # Handle both dict and object responses
+            if isinstance(row, dict):
+                return str(row["id"])
+            return str(row.id) if hasattr(row, 'id') else str(row)
+        return None
+
     async def get_subjects_for_class(
         self, class_id: str, active_only: bool = True
     ) -> List[SubjectInfo]:

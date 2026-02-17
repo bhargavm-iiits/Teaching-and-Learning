@@ -24,6 +24,7 @@ class AvatarActionType(str, Enum):
     WAVE = "wave"
     THINK = "think"
     CELEBRATE = "celebrate"
+    QUESTION = "question"  # For asking questions during assessment
 
 
 class AvatarCharacter(str, Enum):
@@ -54,6 +55,7 @@ class VoiceEmotion(str, Enum):
     SERIOUS = "serious"
     EXCITED = "excited"
     CURIOUS = "curious"
+    CALM = "calm"
 
 
 class VoicePace(str, Enum):
@@ -178,6 +180,7 @@ class InputMode(str, Enum):
     VOICE = "voice"
     SELECTION = "selection"
     GESTURE = "gesture"
+    GAZE = "gaze"
 
 
 class AssessmentCommand(BaseModel):
@@ -186,6 +189,7 @@ class AssessmentCommand(BaseModel):
     Unity handles: UI display, input capture, response collection.
     """
     type: AssessmentType
+    question_id: Optional[str] = None  # Unique ID for tracking responses
     
     # Question content
     question: Optional[str] = None

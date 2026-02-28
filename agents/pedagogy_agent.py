@@ -345,6 +345,81 @@ Objects: {analogy_data.get('objects', [])}
             interaction_points=result.get("interaction_points", []),
         ).model_dump()
 
+    async def generate_lesson_content(
+        self,
+        topic_name: str,
+        subject_code: str,
+        subtopics: List[str],
+        pedagogy_plan: Dict[str, Any],
+        learning_style: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generate actual teaching content (explanations, examples, practice).
+        
+        This builds the lesson text a student reads/hears, using the
+        pedagogy plan's strategy (analogy, approach, visualization) to
+        shape the content.
+        """
+        subtopics_str = "\n".join(f"- {s}" for s in subtopics) if subtopics else "- (General overview)"
+        
+        prompt = self._format_prompt(
+            task=f"""Generate a complete, engaging lesson for "{topic_name}" in Class 10 {subject_code.upper()}.
+
+## Teaching Strategy (follow this)
+- Approach: {pedagogy_plan.get('approach', 'intuition-first')}
+- Core analogy: {pedagogy_plan.get('analogy', 'real-world examples')}
+- Visualization: {pedagogy_plan.get('visualization', 'interactive 3D')}
+- Student learning style: {learning_style or 'visual'}
+
+## Subtopics to Cover
+{subtopics_str}
+
+## Instructions
+1. Write an engaging introduction that hooks the student using the analogy above.
+2. For EACH subtopic write:
+   - A clear explanation (2-4 paragraphs, conversational tone, Class 10 level)
+   - At least one worked example with step-by-step solution
+   - A real-world connection or analogy
+3. End with key takeaways and 2-3 practice problems with answers.
+4. Use simple language. Avoid jargon unless defining it.
+5. Make it feel like a friendly tutor speaking to a 15-year-old.""",
+            output_format="""{
+  "title": "Number Systems — Your Gateway to Mathematics",
+  "introduction": "Imagine a world where alien teams visit Earth for a cricket match, but each team counts runs differently...",
+  "sections": [
+    {
+      "subtopic": "Real Numbers",
+      "explanation": "Let's start with a question: can every point on a number line be named?...",
+      "example": {
+        "problem": "Classify the following numbers: 3, -2, 0.75, √2, π",
+        "solution": "3 is a natural number and integer. -2 is an integer. 0.75 = 3/4 is rational. √2 ≈ 1.414... is irrational. π ≈ 3.14159... is irrational."
+      },
+      "real_world_connection": "When you measure the diagonal of a 1×1 tile, you get √2 — a number that goes on forever without repeating."
+    }
+  ],
+  "key_takeaways": [
+    "Every rational number can be written as p/q where q ≠ 0",
+    "Irrational numbers have non-terminating, non-repeating decimals"
+  ],
+  "practice_problems": [
+    {
+      "question": "Is 0.333... rational or irrational? Explain.",
+      "answer": "Rational, because 0.333... = 1/3"
+    }
+  ]
+}"""
+        )
+        
+        result = await self._invoke_llm_json(prompt)
+        
+        return {
+            "title": result.get("title", f"Lesson: {topic_name}"),
+            "introduction": result.get("introduction", ""),
+            "sections": result.get("sections", []),
+            "key_takeaways": result.get("key_takeaways", []),
+            "practice_problems": result.get("practice_problems", []),
+        }
+
     async def select_analogy(
         self,
         student_id: str,

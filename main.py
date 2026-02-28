@@ -6,12 +6,39 @@ with the new multi-agent system for personalized VR teaching.
 """
 
 import os
-from typing import List, Optional
+import json
+from typing import List, Optional, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, AnyHttpUrl
+
+
+# ============================================================================
+# SSE Helper
+# ============================================================================
+
+async def sse_stream(generator) -> AsyncGenerator[str, None]:
+    """
+    Convert an async generator of dicts to Server-Sent Events format.
+    
+    Each yielded dict becomes an SSE event:
+    - {"event": "progress", "step": "...", "progress": 50} → event: progress
+    - {"event": "result", "data": {...}} → event: result
+    - {"event": "error", "error": "..."} → event: error
+    """
+    try:
+        async for event in generator:
+            event_type = event.get("event", "progress")
+            payload = json.dumps(event, default=str)
+            yield f"event: {event_type}\ndata: {payload}\n\n"
+        
+        # Final done event  
+        yield f"event: done\ndata: {{}}\n\n"
+    except Exception as e:
+        error_payload = json.dumps({"event": "error", "error": str(e)})
+        yield f"event: error\ndata: {error_payload}\n\n"
 
 # Existing RAG imports
 from gen_topic import ingest_pdf_from_url
@@ -263,17 +290,18 @@ async def start_onboarding(req: OnboardingStartRequest):
     """
     Start onboarding assessment for a new student.
     
-    This generates a broad diagnostic test covering all topics in a subject
-    to establish the student's baseline knowledge.
+    Streams SSE progress events as questions are generated per topic,
+    followed by a final result event with the complete assessment.
     """
-    try:
-        result = await orchestrator.run_onboarding_assessment(
-            student_id=req.student_id,
-            subject_code=req.subject_code,
-        )
-        return JSONResponse(status_code=200, content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    generator = orchestrator.run_onboarding_assessment_stream(
+        student_id=req.student_id,
+        subject_code=req.subject_code,
+    )
+    return StreamingResponse(
+        sse_stream(generator),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/onboarding/submit", tags=["Onboarding"])
@@ -281,20 +309,21 @@ async def submit_onboarding(req: OnboardingSubmitRequest):
     """
     Submit onboarding assessment and get personalized learning path.
     
-    Returns topic-wise scores, identified strengths/weaknesses,
-    and a recommended learning path.
+    Streams SSE progress as each topic is evaluated, profile updated,
+    and learning path generated.
     """
-    try:
-        result = await orchestrator.submit_onboarding_assessment(
-            student_id=req.student_id,
-            assessment_id=req.assessment_id,
-            subject_code=req.subject_code,
-            questions=req.questions,
-            responses=req.responses,
-        )
-        return JSONResponse(status_code=200, content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    generator = orchestrator.submit_onboarding_stream(
+        student_id=req.student_id,
+        assessment_id=req.assessment_id,
+        subject_code=req.subject_code,
+        questions=req.questions,
+        responses=req.responses,
+    )
+    return StreamingResponse(
+        sse_stream(generator),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ============================================================================
@@ -306,17 +335,18 @@ async def start_teaching_session(req: StartSessionRequest):
     """
     Start a new teaching session.
     
-    The system automatically determines the next topic based on
-    the student's progress and returns VR instructions.
+    Streams SSE progress as profile is loaded, topic determined,
+    pedagogy planned, and VR session generated.
     """
-    try:
-        result = await orchestrator.start_session(
-            student_id=req.student_id,
-            subject_code=req.subject_code,
-        )
-        return JSONResponse(status_code=200, content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    generator = orchestrator.start_session_stream(
+        student_id=req.student_id,
+        subject_code=req.subject_code,
+    )
+    return StreamingResponse(
+        sse_stream(generator),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/teach/content", tags=["Teaching"])
@@ -324,19 +354,20 @@ async def get_teaching_content(req: TeachingContentRequest):
     """
     Generate teaching content for a specific topic.
     
-    Returns lesson content with pedagogy plan (analogies, approach)
-    and complete VR instructions for Unity.
+    Streams SSE progress as curriculum, pedagogy, and VR session
+    are generated for the requested topic.
     """
-    try:
-        result = await orchestrator.generate_teaching_content(
-            student_id=req.student_id,
-            subject_code=req.subject_code,
-            topic_code=req.topic_code,
-            topic_name=req.topic_name,
-        )
-        return JSONResponse(status_code=200, content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    generator = orchestrator.generate_teaching_content_stream(
+        student_id=req.student_id,
+        subject_code=req.subject_code,
+        topic_code=req.topic_code,
+        topic_name=req.topic_name,
+    )
+    return StreamingResponse(
+        sse_stream(generator),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ============================================================================
@@ -348,18 +379,19 @@ async def generate_diagnostic(req: DiagnosticRequest):
     """
     Generate diagnostic assessment questions.
     
-    Can be used for initial, mid-lesson, or post-lesson assessments.
+    Streams SSE progress as questions are generated and VR layout created.
     """
-    try:
-        result = await orchestrator.run_initial_assessment(
-            student_id=req.student_id,
-            subject_code=req.subject_code,
-            topic_code=req.topic_code,
-            topic_name=req.topic_name,
-        )
-        return JSONResponse(status_code=200, content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    generator = orchestrator.generate_assessment_stream(
+        student_id=req.student_id,
+        subject_code=req.subject_code,
+        topic_code=req.topic_code,
+        topic_name=req.topic_name,
+    )
+    return StreamingResponse(
+        sse_stream(generator),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/assessments/submit", tags=["Assessments"])
@@ -367,21 +399,23 @@ async def submit_assessment(req: SubmitAssessmentRequest):
     """
     Submit assessment responses and get results.
     
-    Returns scores, identified misconceptions, and remediation suggestions.
+    Streams SSE progress as MCQs evaluated, misconceptions identified,
+    profile updated, and remediation generated.
     """
-    try:
-        result = await orchestrator.submit_assessment(
-            student_id=req.student_id,
-            assessment_id=req.assessment_id,
-            subject_code=req.subject_code,
-            topic_code=req.topic_code,
-            topic_name=req.topic_name,
-            questions=req.questions,
-            responses=req.responses,
-        )
-        return JSONResponse(status_code=200, content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    generator = orchestrator.submit_assessment_stream(
+        student_id=req.student_id,
+        assessment_id=req.assessment_id,
+        subject_code=req.subject_code,
+        topic_code=req.topic_code,
+        topic_name=req.topic_name,
+        questions=req.questions,
+        responses=req.responses,
+    )
+    return StreamingResponse(
+        sse_stream(generator),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ============================================================================
@@ -390,31 +424,33 @@ async def submit_assessment(req: SubmitAssessmentRequest):
 
 @app.post("/exams/generate", tags=["Exams"])
 async def generate_exam(req: GenerateExamRequest):
-    """Generate a comprehensive exam for a topic."""
-    try:
-        result = await orchestrator.generate_exam(
-            student_id=req.student_id,
-            subject_code=req.subject_code,
-            topic_code=req.topic_code,
-            topic_name=req.topic_name,
-            num_questions=req.num_questions,
-        )
-        return JSONResponse(status_code=200, content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Generate a comprehensive exam. Streams SSE progress events."""
+    generator = orchestrator.generate_exam_stream(
+        student_id=req.student_id,
+        subject_code=req.subject_code,
+        topic_code=req.topic_code,
+        topic_name=req.topic_name,
+        num_questions=req.num_questions,
+    )
+    return StreamingResponse(
+        sse_stream(generator),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/exams/submit", tags=["Exams"])
 async def submit_exam(req: SubmitExamRequest):
-    """Submit exam and get graded results with detailed feedback."""
-    try:
-        result = await orchestrator.grade_exam(
-            exam=req.exam,
-            responses=req.responses,
-        )
-        return JSONResponse(status_code=200, content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Submit exam and get graded results. Streams SSE progress events."""
+    generator = orchestrator.grade_exam_stream(
+        exam=req.exam,
+        responses=req.responses,
+    )
+    return StreamingResponse(
+        sse_stream(generator),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ============================================================================

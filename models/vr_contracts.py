@@ -25,6 +25,9 @@ class AvatarActionType(str, Enum):
     THINK = "think"
     CELEBRATE = "celebrate"
     QUESTION = "question"  # For asking questions during assessment
+    GREET = "greet"
+    DEMONSTRATE = "demonstrate"
+    ENCOURAGE = "encourage"
 
 
 class AvatarCharacter(str, Enum):
@@ -135,6 +138,7 @@ class InteractionType(str, Enum):
     GAZE_SELECT = "gaze_select"
     TOUCH = "touch"
     TELEPORT = "teleport"
+    MULTIPLE_CHOICE = "multiple_choice"
 
 
 class InteractionCommand(BaseModel):

@@ -98,12 +98,14 @@ class StudentResponse(BaseModel):
 class OnboardingStartRequest(BaseModel):
     student_id: str
     subject_code: str
+    topic_code: str
 
 
 class OnboardingSubmitRequest(BaseModel):
     assessment_id: str
     student_id: str
     subject_code: str
+    topic_code: str
     questions: list
     responses: list
 
@@ -296,6 +298,7 @@ async def start_onboarding(req: OnboardingStartRequest):
     generator = orchestrator.run_onboarding_assessment_stream(
         student_id=req.student_id,
         subject_code=req.subject_code,
+        topic_code=req.topic_code,
     )
     return StreamingResponse(
         sse_stream(generator),
@@ -316,6 +319,7 @@ async def submit_onboarding(req: OnboardingSubmitRequest):
         student_id=req.student_id,
         assessment_id=req.assessment_id,
         subject_code=req.subject_code,
+        topic_code=req.topic_code,
         questions=req.questions,
         responses=req.responses,
     )

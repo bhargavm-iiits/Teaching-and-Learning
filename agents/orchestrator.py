@@ -292,41 +292,50 @@ class AgentOrchestrator:
         self,
         student_id: str,
         subject_code: str,
+        topic_code: str,
     ) -> Dict[str, Any]:
         """
-        Run a comprehensive onboarding assessment for a NEW student.
+        Run an onboarding assessment for a student on a specific topic.
         
-        This tests across ALL topics in a subject to establish baseline knowledge.
-        Used when a student first selects a subject.
+        Generates diagnostic questions for the given topic to establish
+        baseline knowledge.
         
         Returns:
-            Assessment with questions covering all topics
+            Assessment with questions covering the specified topic
         """
-        # Get syllabus to know all topics
+        # Get syllabus to find the topic
         syllabus = self.curriculum_agent.get_syllabus(subject_code)
         if "error" in syllabus:
             return syllabus
         
+        # Find the specific topic
         all_topics = syllabus.get("topics", [])
+        target_topic = None
+        for t in all_topics:
+            if t["topic_code"] == topic_code:
+                target_topic = t
+                break
         
-        # Generate 2-3 questions per topic for broad coverage
+        if not target_topic:
+            return {"error": f"Topic '{topic_code}' not found in subject '{subject_code}'"}
+        
+        # Generate diagnostic questions for this topic
         all_questions = []
         total_marks = 0
         
-        for topic in all_topics[:5]:  # Limit to first 5 topics for reasonable length
-            questions_result = await self.assessment_agent.process({
-                "action": "generate_questions",
-                "subject_code": subject_code,
-                "topic_code": topic["topic_code"],
-                "topic_name": topic["topic_name"],
-                "stage": AssessmentStage.INITIAL.value,
-                "context": "Generate only 3 quick diagnostic questions for onboarding.",
-            })
-            
-            for q in questions_result.get("questions", [])[:3]:  # Max 3 per topic
-                q["source_topic"] = topic["topic_code"]
-                all_questions.append(q)
-                total_marks += q.get("max_marks", 1)
+        questions_result = await self.assessment_agent.process({
+            "action": "generate_questions",
+            "subject_code": subject_code,
+            "topic_code": target_topic["topic_code"],
+            "topic_name": target_topic["topic_name"],
+            "stage": AssessmentStage.INITIAL.value,
+            "context": f"Generate 20-25 diagnostic questions for onboarding on topic: {target_topic['topic_name']}. Cover subtopics thoroughly: {', '.join(target_topic.get('subtopics', []))}. Ensure broad coverage across all subtopics.",
+        })
+        
+        for q in questions_result.get("questions", []):
+            q["source_topic"] = target_topic["topic_code"]
+            all_questions.append(q)
+            total_marks += q.get("max_marks", 1)
         
         return {
             "assessment_id": str(uuid.uuid4()),
@@ -334,11 +343,13 @@ class AgentOrchestrator:
             "student_id": student_id,
             "subject_code": subject_code,
             "subject_name": syllabus.get("subject_name"),
+            "topic_code": target_topic["topic_code"],
+            "topic_name": target_topic["topic_name"],
             "questions": all_questions,
             "total_marks": total_marks,
             "total_questions": len(all_questions),
-            "topics_covered": [t["topic_code"] for t in all_topics[:5]],
-            "estimated_time_minutes": max(15, len(all_questions) * 2),
+            "topics_covered": [target_topic["topic_code"]],
+            "estimated_time_minutes": max(10, len(all_questions) * 2),
         }
 
     async def submit_onboarding_assessment(
@@ -346,57 +357,39 @@ class AgentOrchestrator:
         student_id: str,
         assessment_id: str,
         subject_code: str,
+        topic_code: str,
         questions: List[Dict[str, Any]],
         responses: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
-        Submit onboarding assessment and get personalized learning path.
+        Submit onboarding assessment for a specific topic and get results.
         
         Returns:
-            Profile update + recommended learning path
+            Profile update + topic score + recommended learning path
         """
-        # Group questions by topic
-        topics_results = {}
+        # Evaluate MCQ answers
+        mcq_result = await self.assessment_agent.process({
+            "action": "evaluate_mcq",
+            "questions": questions,
+            "responses": responses,
+        })
         
-        for q in questions:
-            topic = q.get("source_topic", "general")
-            if topic not in topics_results:
-                topics_results[topic] = {"questions": [], "responses": []}
-            topics_results[topic]["questions"].append(q)
-            
-            # Find matching response
-            response = next(
-                (r for r in responses if r["question_id"] == q["question_id"]),
-                None
-            )
-            if response:
-                topics_results[topic]["responses"].append(response)
-        
-        # Evaluate each topic
-        topic_scores = {}
-        all_weak_topics = []
-        all_strong_topics = []
-        
-        for topic_code, data in topics_results.items():
-            # Evaluate MCQs
-            mcq_result = await self.assessment_agent.process({
-                "action": "evaluate_mcq",
-                "questions": data["questions"],
-                "responses": data["responses"],
-            })
-            
-            percentage = mcq_result.get("percentage", 0)
-            topic_scores[topic_code] = {
+        percentage = mcq_result.get("percentage", 0)
+        topic_scores = {
+            topic_code: {
                 "score": percentage,
                 "correct": mcq_result.get("correct_count", 0),
                 "total": mcq_result.get("total_questions", 0),
             }
-            
-            # Classify topic
-            if percentage >= 70:
-                all_strong_topics.append(topic_code)
-            elif percentage < 40:
-                all_weak_topics.append(topic_code)
+        }
+        
+        # Classify topic strength
+        all_weak_topics = []
+        all_strong_topics = []
+        if percentage >= 70:
+            all_strong_topics.append(topic_code)
+        elif percentage < 40:
+            all_weak_topics.append(topic_code)
         
         # Update profile with results
         await self.profile_agent.process({
@@ -404,6 +397,7 @@ class AgentOrchestrator:
             "student_id": student_id,
             "assessment_result": {
                 "subject_code": subject_code,
+                "topic_code": topic_code,
                 "weak_concepts": all_weak_topics,
                 "strong_concepts": all_strong_topics,
             },
@@ -416,19 +410,14 @@ class AgentOrchestrator:
             "subject_code": subject_code,
         })
         
-        # Determine recommended starting topic
-        recommended_start = all_weak_topics[0] if all_weak_topics else (
-            learning_path.get("learning_path", [{}])[0].get("topic_code", "motion")
-        )
-        
         return {
             "assessment_id": assessment_id,
+            "topic_code": topic_code,
             "profile_updated": True,
             "topic_scores": topic_scores,
-            "overall_percentage": sum(t["score"] for t in topic_scores.values()) / len(topic_scores) if topic_scores else 0,
+            "overall_percentage": percentage,
             "strong_topics": all_strong_topics,
             "weak_topics": all_weak_topics,
-            "recommended_start": recommended_start,
             "learning_path": learning_path,
         }
 
@@ -514,8 +503,9 @@ class AgentOrchestrator:
         self,
         student_id: str,
         subject_code: str,
+        topic_code: str,
     ):
-        """Stream onboarding assessment generation with progress events."""
+        """Stream onboarding assessment generation for a specific topic."""
         yield {"event": "progress", "step": "Loading syllabus...", "progress": 5}
 
         syllabus = self.curriculum_agent.get_syllabus(subject_code)
@@ -523,34 +513,38 @@ class AgentOrchestrator:
             yield {"event": "error", "error": syllabus["error"]}
             return
 
+        # Find the specific topic
         all_topics = syllabus.get("topics", [])
-        topics_to_test = all_topics[:5]
-        total_steps = len(topics_to_test) + 1  # +1 for VR instructions
+        target_topic = None
+        for t in all_topics:
+            if t["topic_code"] == topic_code:
+                target_topic = t
+                break
 
-        yield {"event": "progress", "step": f"Found {len(topics_to_test)} topics to assess", "progress": 10}
+        if not target_topic:
+            yield {"event": "error", "error": f"Topic '{topic_code}' not found in subject '{subject_code}'"}
+            return
+
+        yield {"event": "progress", "step": f"Generating questions for {target_topic['topic_name']}...", "progress": 20}
 
         all_questions = []
         total_marks = 0
 
-        for i, topic in enumerate(topics_to_test):
-            pct = 10 + int((i / total_steps) * 80)
-            yield {"event": "progress", "step": f"Generating questions for {topic['topic_name']}...", "progress": pct}
+        questions_result = await self.assessment_agent.process({
+            "action": "generate_questions",
+            "subject_code": subject_code,
+            "topic_code": target_topic["topic_code"],
+            "topic_name": target_topic["topic_name"],
+            "stage": AssessmentStage.INITIAL.value,
+            "context": f"Generate 20-25 diagnostic questions for onboarding on topic: {target_topic['topic_name']}. Cover subtopics thoroughly: {', '.join(target_topic.get('subtopics', []))}. Ensure broad coverage across all subtopics.",
+        })
 
-            questions_result = await self.assessment_agent.process({
-                "action": "generate_questions",
-                "subject_code": subject_code,
-                "topic_code": topic["topic_code"],
-                "topic_name": topic["topic_name"],
-                "stage": AssessmentStage.INITIAL.value,
-                "context": "Generate only 3 quick diagnostic questions for onboarding.",
-            })
+        for q in questions_result.get("questions", []):
+            q["source_topic"] = target_topic["topic_code"]
+            all_questions.append(q)
+            total_marks += q.get("max_marks", 1)
 
-            for q in questions_result.get("questions", [])[:3]:
-                q["source_topic"] = topic["topic_code"]
-                all_questions.append(q)
-                total_marks += q.get("max_marks", 1)
-
-            yield {"event": "progress", "step": f"✓ {topic['topic_name']} — {len(questions_result.get('questions', [])[:3])} questions", "progress": pct + 5}
+        yield {"event": "progress", "step": f"✓ {target_topic['topic_name']} — {len(all_questions)} questions generated", "progress": 80}
 
         result = {
             "assessment_id": str(uuid.uuid4()),
@@ -558,11 +552,13 @@ class AgentOrchestrator:
             "student_id": student_id,
             "subject_code": subject_code,
             "subject_name": syllabus.get("subject_name"),
+            "topic_code": target_topic["topic_code"],
+            "topic_name": target_topic["topic_name"],
             "questions": all_questions,
             "total_marks": total_marks,
             "total_questions": len(all_questions),
-            "topics_covered": [t["topic_code"] for t in topics_to_test],
-            "estimated_time_minutes": max(15, len(all_questions) * 2),
+            "topics_covered": [target_topic["topic_code"]],
+            "estimated_time_minutes": max(10, len(all_questions) * 2),
         }
 
         yield {"event": "result", "data": result, "progress": 100}
@@ -572,66 +568,51 @@ class AgentOrchestrator:
         student_id: str,
         assessment_id: str,
         subject_code: str,
+        topic_code: str,
         questions: List[Dict[str, Any]],
         responses: List[Dict[str, Any]],
     ):
-        """Stream onboarding submission with progress events."""
-        yield {"event": "progress", "step": "Grouping questions by topic...", "progress": 5}
+        """Stream onboarding submission for a specific topic with progress events."""
+        yield {"event": "progress", "step": f"Evaluating {topic_code}...", "progress": 10}
 
-        # Group questions by topic
-        topics_results = {}
-        for q in questions:
-            topic = q.get("source_topic", "general")
-            if topic not in topics_results:
-                topics_results[topic] = {"questions": [], "responses": []}
-            topics_results[topic]["questions"].append(q)
-            response = next(
-                (r for r in responses if r["question_id"] == q["question_id"]),
-                None
-            )
-            if response:
-                topics_results[topic]["responses"].append(response)
+        # Evaluate MCQ answers
+        mcq_result = await self.assessment_agent.process({
+            "action": "evaluate_mcq",
+            "questions": questions,
+            "responses": responses,
+        })
 
-        topic_scores = {}
-        all_weak_topics = []
-        all_strong_topics = []
-        topic_list = list(topics_results.items())
-
-        for i, (topic_code, data) in enumerate(topic_list):
-            pct = 10 + int((i / len(topic_list)) * 50)
-            yield {"event": "progress", "step": f"Evaluating {topic_code}...", "progress": pct}
-
-            mcq_result = await self.assessment_agent.process({
-                "action": "evaluate_mcq",
-                "questions": data["questions"],
-                "responses": data["responses"],
-            })
-
-            percentage = mcq_result.get("percentage", 0)
-            topic_scores[topic_code] = {
+        percentage = mcq_result.get("percentage", 0)
+        topic_scores = {
+            topic_code: {
                 "score": percentage,
                 "correct": mcq_result.get("correct_count", 0),
                 "total": mcq_result.get("total_questions", 0),
             }
+        }
 
-            if percentage >= 70:
-                all_strong_topics.append(topic_code)
-            elif percentage < 40:
-                all_weak_topics.append(topic_code)
+        # Classify topic strength
+        all_weak_topics = []
+        all_strong_topics = []
+        if percentage >= 70:
+            all_strong_topics.append(topic_code)
+        elif percentage < 40:
+            all_weak_topics.append(topic_code)
 
-        yield {"event": "progress", "step": "Updating learner profile...", "progress": 70}
+        yield {"event": "progress", "step": "Updating learner profile...", "progress": 50}
 
         await self.profile_agent.process({
             "action": "update_from_assessment",
             "student_id": student_id,
             "assessment_result": {
                 "subject_code": subject_code,
+                "topic_code": topic_code,
                 "weak_concepts": all_weak_topics,
                 "strong_concepts": all_strong_topics,
             },
         })
 
-        yield {"event": "progress", "step": "Generating learning path...", "progress": 85}
+        yield {"event": "progress", "step": "Generating learning path...", "progress": 75}
 
         learning_path = await self.curriculum_agent.process({
             "action": "get_learning_path",
@@ -639,18 +620,14 @@ class AgentOrchestrator:
             "subject_code": subject_code,
         })
 
-        recommended_start = all_weak_topics[0] if all_weak_topics else (
-            learning_path.get("learning_path", [{}])[0].get("topic_code", "motion")
-        )
-
         result = {
             "assessment_id": assessment_id,
+            "topic_code": topic_code,
             "profile_updated": True,
             "topic_scores": topic_scores,
-            "overall_percentage": sum(t["score"] for t in topic_scores.values()) / len(topic_scores) if topic_scores else 0,
+            "overall_percentage": percentage,
             "strong_topics": all_strong_topics,
             "weak_topics": all_weak_topics,
-            "recommended_start": recommended_start,
             "learning_path": learning_path,
         }
 

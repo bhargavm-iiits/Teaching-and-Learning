@@ -161,6 +161,10 @@ class Question(BaseModel):
     
     max_marks: int = 1
 
+    # VR visual analogy context (optional)
+    # Contains: analogy, scene, visual_objects, visualization_prompt
+    vr_visual_context: Optional[Dict[str, Any]] = None
+
 
 class QuestionResponse(BaseModel):
     """Student's response to a question."""

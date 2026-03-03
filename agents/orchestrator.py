@@ -120,6 +120,13 @@ class AgentOrchestrator:
         Returns:
             Assessment questions and session info
         """
+        # Get VR analogy context for visual question enrichment
+        analogy_context = None
+        if topic_code:
+            analogy_context = self.pedagogy_agent.get_vr_elements(
+                subject_code, topic_code
+            )
+
         # Generate diagnostic questions (Agent A)
         questions_result = await self.assessment_agent.process({
             "action": "generate_questions",
@@ -127,6 +134,7 @@ class AgentOrchestrator:
             "topic_code": topic_code,
             "topic_name": topic_name,
             "stage": AssessmentStage.INITIAL.value,
+            "analogy_context": analogy_context,
         })
         
         return {
@@ -253,6 +261,11 @@ class AgentOrchestrator:
         """
         Generate an exam for a topic.
         """
+        # Get VR analogy context for visual question enrichment
+        analogy_context = self.pedagogy_agent.get_vr_elements(
+            subject_code, topic_code
+        )
+
         return await self.evaluation_agent.process({
             "action": "generate_exam",
             "student_id": student_id,
@@ -260,6 +273,7 @@ class AgentOrchestrator:
             "topic_code": topic_code,
             "topic_name": topic_name,
             "num_questions": num_questions,
+            "analogy_context": analogy_context,
         })
 
     async def grade_exam(
@@ -322,7 +336,12 @@ class AgentOrchestrator:
         # Generate diagnostic questions for this topic
         all_questions = []
         total_marks = 0
-        
+
+        # Get VR analogy context for visual question enrichment
+        analogy_context = self.pedagogy_agent.get_vr_elements(
+            subject_code, target_topic["topic_code"]
+        )
+
         questions_result = await self.assessment_agent.process({
             "action": "generate_questions",
             "subject_code": subject_code,
@@ -330,6 +349,7 @@ class AgentOrchestrator:
             "topic_name": target_topic["topic_name"],
             "stage": AssessmentStage.INITIAL.value,
             "context": f"Generate 20-25 diagnostic questions for onboarding on topic: {target_topic['topic_name']}. Cover subtopics thoroughly: {', '.join(target_topic.get('subtopics', []))}. Ensure broad coverage across all subtopics.",
+            "analogy_context": analogy_context,
         })
         
         for q in questions_result.get("questions", []):
@@ -530,6 +550,11 @@ class AgentOrchestrator:
         all_questions = []
         total_marks = 0
 
+        # Get VR analogy context for visual question enrichment
+        analogy_context = self.pedagogy_agent.get_vr_elements(
+            subject_code, target_topic["topic_code"]
+        )
+
         questions_result = await self.assessment_agent.process({
             "action": "generate_questions",
             "subject_code": subject_code,
@@ -537,6 +562,7 @@ class AgentOrchestrator:
             "topic_name": target_topic["topic_name"],
             "stage": AssessmentStage.INITIAL.value,
             "context": f"Generate 20-25 diagnostic questions for onboarding on topic: {target_topic['topic_name']}. Cover subtopics thoroughly: {', '.join(target_topic.get('subtopics', []))}. Ensure broad coverage across all subtopics.",
+            "analogy_context": analogy_context,
         })
 
         for q in questions_result.get("questions", []):
@@ -777,12 +803,20 @@ class AgentOrchestrator:
         """Stream assessment generation with progress events."""
         yield {"event": "progress", "step": "Generating diagnostic questions...", "progress": 20}
 
+        # Get VR analogy context for visual question enrichment
+        analogy_context = None
+        if topic_code:
+            analogy_context = self.pedagogy_agent.get_vr_elements(
+                subject_code, topic_code
+            )
+
         questions_result = await self.assessment_agent.process({
             "action": "generate_questions",
             "subject_code": subject_code,
             "topic_code": topic_code,
             "topic_name": topic_name,
             "stage": AssessmentStage.INITIAL.value,
+            "analogy_context": analogy_context,
         })
 
         result = {
@@ -900,6 +934,11 @@ class AgentOrchestrator:
         """Stream exam generation with progress events."""
         yield {"event": "progress", "step": "Generating exam questions...", "progress": 20}
 
+        # Get VR analogy context for visual question enrichment
+        analogy_context = self.pedagogy_agent.get_vr_elements(
+            subject_code, topic_code
+        )
+
         result = await self.evaluation_agent.process({
             "action": "generate_exam",
             "student_id": student_id,
@@ -907,6 +946,7 @@ class AgentOrchestrator:
             "topic_code": topic_code,
             "topic_name": topic_name,
             "num_questions": num_questions,
+            "analogy_context": analogy_context,
         })
 
         yield {"event": "result", "data": result, "progress": 100}

@@ -77,6 +77,7 @@ You believe every student can improve with the right guidance."""
                 topic_code=input_data["topic_code"],
                 topic_name=input_data.get("topic_name"),
                 num_questions=input_data.get("num_questions", 10),
+                analogy_context=input_data.get("analogy_context"),
             )
         elif action == "evaluate_exam":
             return await self.evaluate_exam(
@@ -103,6 +104,7 @@ You believe every student can improve with the right guidance."""
         topic_code: str,
         topic_name: Optional[str] = None,
         num_questions: int = 10,
+        analogy_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Generate a comprehensive exam for a topic.
@@ -112,7 +114,21 @@ You believe every student can improve with the right guidance."""
         """
         # Get learner profile for personalization
         profile = await supabase_manager.get_learner_profile(student_id)
-        
+
+        # Build analogy hint section for VR visual context
+        analogy_hint = ""
+        if analogy_context:
+            analogy_hint = f"""\n\n## VR Visual Analogy Context (use this to create visual context for each question)
+The topic uses this analogy for VR teaching: "{analogy_context.get('analogy', 'real-world analogy')}"
+Recommended VR scene: {analogy_context.get('scene', 'virtual_classroom')}
+Available VR objects: {analogy_context.get('objects', [])}
+
+For EACH question, also generate a "vr_visual_context" block with:
+- analogy: A short VR-friendly analogy/scenario related to the concept being tested (1-2 sentences)
+- scene: A VR scene name where this question can be visualized (e.g., "cricket_ground", "classroom", "lab")
+- visual_objects: List of 2-4 3D objects to render in VR alongside the question
+- visualization_prompt: Brief description of what the VR environment should show while asking this question (1-2 sentences)"""
+
         # Use LLM to generate exam
         prompt = self._format_prompt(
             task=f"""Create a {num_questions}-question exam for Class 10 {subject_code.upper()} on "{topic_name or topic_code}".
@@ -138,7 +154,8 @@ For each question provide:
 - For MCQ: options (array) and correct_answer
 - For descriptive: expected_keywords and model_answer
 - For numerical: correct_answer, tolerance, unit
-- max_marks: 1-5 based on complexity""",
+- max_marks: 1-5 based on complexity
+{analogy_hint}""",
             output_format="""{
   "exam_title": "Kinematics - Comprehensive Test",
   "questions": [
@@ -149,7 +166,13 @@ For each question provide:
       "difficulty": "weak",
       "options": ["A) m/s", "B) m/s²", "C) m²/s", "D) s/m"],
       "correct_answer": "B) m/s²",
-      "max_marks": 1
+      "max_marks": 1,
+      "vr_visual_context": {
+        "analogy": "Watch a car speedometer as it accelerates from rest — the needle moves faster and faster",
+        "scene": "city_street",
+        "visual_objects": ["car", "speedometer", "road"],
+        "visualization_prompt": "Show a car accelerating on a road with a speedometer display changing in real-time"
+      }
     }
   ],
   "total_marks": 25,
@@ -182,6 +205,7 @@ For each question provide:
                 tolerance=q.get("tolerance"),
                 unit=q.get("unit"),
                 max_marks=q.get("max_marks", 1),
+                vr_visual_context=q.get("vr_visual_context"),
             ))
         
         exam = Exam(

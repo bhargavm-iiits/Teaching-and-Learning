@@ -81,6 +81,7 @@ Always be encouraging yet accurate in your evaluations."""
                 topic_name=input_data.get("topic_name"),
                 stage=AssessmentStage(input_data.get("stage", "initial")),
                 context=input_data.get("context"),
+                analogy_context=input_data.get("analogy_context"),
             )
         elif action == "evaluate_mcq":
             return await self.evaluate_mcq_answers(
@@ -115,6 +116,7 @@ Always be encouraging yet accurate in your evaluations."""
         topic_name: Optional[str] = None,
         stage: AssessmentStage = AssessmentStage.INITIAL,
         context: Optional[str] = None,
+        analogy_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Generate diagnostic questions for a subject/topic.
@@ -151,7 +153,21 @@ Always be encouraging yet accurate in your evaluations."""
         }
 
         topic_str = topic_name or topic_code or "general concepts"
-        
+
+        # Build analogy hint section for VR visual context
+        analogy_hint = ""
+        if analogy_context:
+            analogy_hint = f"""\n\n## VR Visual Analogy Context (use this to create visual context for each question)
+The topic uses this analogy for VR teaching: "{analogy_context.get('analogy', 'real-world analogy')}"
+Recommended VR scene: {analogy_context.get('scene', 'virtual_classroom')}
+Available VR objects: {analogy_context.get('objects', [])}
+
+For EACH question, also generate a "vr_visual_context" block with:
+- analogy: A short VR-friendly analogy/scenario related to the concept being tested (1-2 sentences)
+- scene: A VR scene name where this question can be visualized (e.g., "cricket_ground", "classroom", "lab")
+- visual_objects: List of 2-4 3D objects to render in VR alongside the question
+- visualization_prompt: Brief description of what the VR environment should show while asking this question (1-2 sentences)"""
+
         prompt = self._format_prompt(
             task=f"""Generate diagnostic questions for Class 10 {subject_code.upper()} on "{topic_str}".
 
@@ -166,6 +182,7 @@ For each question, provide:
 - For descriptive: expected_keywords (key terms for grading) and model_answer
 - For numerical: correct_answer, tolerance, and unit
 - max_marks: Point value (1 for MCQ, 2-5 for descriptive/numerical)
+{analogy_hint}
 
 Generate questions appropriate for 15-16 year old students.""",
             context={"topic": topic_str, "subject": subject_code, "stage": stage.value}
@@ -179,7 +196,13 @@ Generate questions appropriate for 15-16 year old students.""",
       "difficulty": "developing",
       "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
       "correct_answer": "B) ...",
-      "max_marks": 1
+      "max_marks": 1,
+      "vr_visual_context": {
+        "analogy": "Imagine a cricket ball being bowled — what happens to its speed?",
+        "scene": "cricket_ground",
+        "visual_objects": ["cricket_ball", "bowler", "speed_meter"],
+        "visualization_prompt": "Show a bowler running up and releasing the ball with velocity vectors overlaid"
+      }
     },
     {
       "question_id": "q2",
@@ -188,7 +211,13 @@ Generate questions appropriate for 15-16 year old students.""",
       "difficulty": "proficient",
       "expected_keywords": ["keyword1", "keyword2"],
       "model_answer": "...",
-      "max_marks": 3
+      "max_marks": 3,
+      "vr_visual_context": {
+        "analogy": "Think of a car braking suddenly — what forces act on you?",
+        "scene": "city_street",
+        "visual_objects": ["car", "seatbelt", "force_arrows"],
+        "visualization_prompt": "Show a car decelerating with force vectors on the passenger"
+      }
     }
   ],
   "total_marks": 15,
@@ -228,6 +257,7 @@ Generate questions appropriate for 15-16 year old students.""",
                 tolerance=tolerance,
                 unit=q.get("unit"),
                 max_marks=q.get("max_marks", 1),
+                vr_visual_context=q.get("vr_visual_context"),
             ))
         
         return {

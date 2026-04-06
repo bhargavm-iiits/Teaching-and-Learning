@@ -9,7 +9,7 @@ from pypdf import PdfReader
 from pinecone import Pinecone
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 # /d:/Python/Hackathon/Study Buddy Backend/gen_topic.py
 #

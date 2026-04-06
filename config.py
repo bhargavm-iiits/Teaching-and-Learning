@@ -6,7 +6,7 @@ Loads environment variables and provides centralized config access.
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 class Config:
@@ -14,7 +14,7 @@ class Config:
 
     # Anthropic (Claude) Settings
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-    ANTHROPIC_BASE_URL: str = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+    ANTHROPIC_BASE_URL: str = os.getenv("ANTHROPIC_BASE_URL")
     ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 
     # Supabase Settings

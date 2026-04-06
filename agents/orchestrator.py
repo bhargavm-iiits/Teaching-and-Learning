@@ -15,6 +15,7 @@ from agents.curriculum_agent import CurriculumAgent
 from agents.evaluation_agent import EvaluationAgent
 from agents.learner_profile_agent import LearnerProfileAgent
 from agents.pedagogy_agent import PedagogyAgent
+from agents.scene_builder_agent import SceneBuilderAgent
 from agents.vr_instruction_agent import VRInstructionAgent
 from db.supabase_client import supabase_manager
 from models.schemas import AssessmentStage
@@ -23,7 +24,7 @@ from models.schemas import AssessmentStage
 class AgentOrchestrator:
     """
     Orchestrates the multi-agent system for personalized VR teaching.
-    
+
     Flow:
     1. Agent A (Assessment) → Evaluate student
     2. Agent B (Profile) → Update learner profile
@@ -31,6 +32,7 @@ class AgentOrchestrator:
     4. Agent D (Pedagogy) → Decide how to teach
     5. Agent E (VR) → Generate VR instructions
     6. Agent F (Evaluation) → Provide feedback (during/after)
+    7. Agent G (SceneBuilder) → Build VR scene environments
     """
 
     def __init__(self):
@@ -38,6 +40,7 @@ class AgentOrchestrator:
         self.profile_agent = LearnerProfileAgent()
         self.curriculum_agent = CurriculumAgent()
         self.pedagogy_agent = PedagogyAgent()
+        self.scene_builder = SceneBuilderAgent()
         self.vr_agent = VRInstructionAgent()
         self.evaluation_agent = EvaluationAgent()
 
@@ -48,46 +51,55 @@ class AgentOrchestrator:
     ) -> Dict[str, Any]:
         """
         Start a new learning session for a student.
-        
+
         This is the main entry point that coordinates all agents.
-        
+
         Returns:
             Complete VR session with instructions
         """
         session_id = str(uuid.uuid4())
-        
+
         # Step 1: Get current learner profile (Agent B)
-        profile_result = await self.profile_agent.process({
-            "action": "get_profile",
-            "student_id": student_id,
-        })
-        
+        profile_result = await self.profile_agent.process(
+            {
+                "action": "get_profile",
+                "student_id": student_id,
+            }
+        )
+
         if "error" in profile_result:
             return {"error": profile_result["error"], "session_id": session_id}
-        
+
         # Step 2: Determine what to teach (Agent C - Curriculum)
-        curriculum_result = await self.curriculum_agent.process({
-            "action": "get_next_topic",
-            "student_id": student_id,
-            "subject_code": subject_code,
-        })
-        
-        if "message" in curriculum_result and "All topics mastered" in curriculum_result.get("message", ""):
+        curriculum_result = await self.curriculum_agent.process(
+            {
+                "action": "get_next_topic",
+                "student_id": student_id,
+                "subject_code": subject_code,
+            }
+        )
+
+        if (
+            "message" in curriculum_result
+            and "All topics mastered" in curriculum_result.get("message", "")
+        ):
             return {
                 "session_id": session_id,
                 "status": "completed",
                 "message": curriculum_result["message"],
             }
-        
+
         # Step 3: Determine how to teach (Agent D - Pedagogy)
-        pedagogy_result = await self.pedagogy_agent.process({
-            "action": "get_teaching_plan",
-            "student_id": student_id,
-            "subject_code": subject_code,
-            "topic_code": curriculum_result.get("topic_code"),
-            "topic_name": curriculum_result.get("topic_name"),
-        })
-        
+        pedagogy_result = await self.pedagogy_agent.process(
+            {
+                "action": "get_teaching_plan",
+                "student_id": student_id,
+                "subject_code": subject_code,
+                "topic_code": curriculum_result.get("topic_code"),
+                "topic_name": curriculum_result.get("topic_name"),
+            }
+        )
+
         # Step 4: Generate actual teaching content
         lesson_content = await self.pedagogy_agent.generate_lesson_content(
             topic_name=curriculum_result.get("topic_name", ""),
@@ -96,7 +108,7 @@ class AgentOrchestrator:
             pedagogy_plan=pedagogy_result,
             learning_style=profile_result.get("learning_style"),
         )
-        
+
         return {
             "session_id": session_id,
             "status": "ready",
@@ -116,7 +128,7 @@ class AgentOrchestrator:
     ) -> Dict[str, Any]:
         """
         Run an initial diagnostic assessment for a student.
-        
+
         Returns:
             Assessment questions and session info
         """
@@ -128,15 +140,17 @@ class AgentOrchestrator:
             )
 
         # Generate diagnostic questions (Agent A)
-        questions_result = await self.assessment_agent.process({
-            "action": "generate_questions",
-            "subject_code": subject_code,
-            "topic_code": topic_code,
-            "topic_name": topic_name,
-            "stage": AssessmentStage.INITIAL.value,
-            "analogy_context": analogy_context,
-        })
-        
+        questions_result = await self.assessment_agent.process(
+            {
+                "action": "generate_questions",
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": topic_name,
+                "stage": AssessmentStage.INITIAL.value,
+                "analogy_context": analogy_context,
+            }
+        )
+
         return {
             "assessment_id": str(uuid.uuid4()),
             "student_id": student_id,
@@ -144,7 +158,9 @@ class AgentOrchestrator:
             "topic_code": topic_code,
             "questions": questions_result.get("questions", []),
             "total_marks": questions_result.get("total_marks", 0),
-            "estimated_time_minutes": questions_result.get("estimated_time_minutes", 15),
+            "estimated_time_minutes": questions_result.get(
+                "estimated_time_minutes", 15
+            ),
         }
 
     async def submit_assessment(
@@ -159,77 +175,88 @@ class AgentOrchestrator:
     ) -> Dict[str, Any]:
         """
         Submit assessment responses and get results.
-        
+
         Returns:
             Assessment result with feedback
         """
         # Step 1: Evaluate MCQ answers (Agent A)
-        mcq_result = await self.assessment_agent.process({
-            "action": "evaluate_mcq",
-            "questions": questions,
-            "responses": responses,
-        })
-        
+        mcq_result = await self.assessment_agent.process(
+            {
+                "action": "evaluate_mcq",
+                "questions": questions,
+                "responses": responses,
+            }
+        )
+
         # Step 2: Evaluate descriptive answers (Agent A)
         descriptive_results = []
         for q in questions:
             if q["question_type"] in ["descriptive", "numerical"]:
                 response = next(
-                    (r for r in responses if r["question_id"] == q["question_id"]),
-                    None
+                    (r for r in responses if r["question_id"] == q["question_id"]), None
                 )
                 if response:
-                    eval_result = await self.assessment_agent.process({
-                        "action": "evaluate_descriptive",
-                        "question": q,
-                        "student_answer": response["answer"],
-                    })
+                    eval_result = await self.assessment_agent.process(
+                        {
+                            "action": "evaluate_descriptive",
+                            "question": q,
+                            "student_answer": response["answer"],
+                        }
+                    )
                     descriptive_results.append(eval_result)
-        
+
         # Step 3: Identify misconceptions (Agent A)
         misconceptions = {}
         if mcq_result.get("wrong_answers"):
-            misconceptions = await self.assessment_agent.process({
-                "action": "identify_misconceptions",
-                "topic_name": topic_name or topic_code,
-                "wrong_answers": mcq_result["wrong_answers"],
-            })
-        
+            misconceptions = await self.assessment_agent.process(
+                {
+                    "action": "identify_misconceptions",
+                    "topic_name": topic_name or topic_code,
+                    "wrong_answers": mcq_result["wrong_answers"],
+                }
+            )
+
         # Step 4: Calculate final result (Agent A)
-        assessment_result = await self.assessment_agent.process({
-            "action": "calculate_result",
-            "student_id": student_id,
-            "subject_code": subject_code,
-            "topic_code": topic_code,
-            "topic_name": topic_name,
-            "evaluations": {
-                "mcq_results": mcq_result,
-                "descriptive_results": descriptive_results,
-                "misconceptions": misconceptions,
-            },
-        })
-        
+        assessment_result = await self.assessment_agent.process(
+            {
+                "action": "calculate_result",
+                "student_id": student_id,
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": topic_name,
+                "evaluations": {
+                    "mcq_results": mcq_result,
+                    "descriptive_results": descriptive_results,
+                    "misconceptions": misconceptions,
+                },
+            }
+        )
+
         # Step 5: Update learner profile (Agent B)
-        await self.profile_agent.process({
-            "action": "update_from_assessment",
-            "student_id": student_id,
-            "assessment_result": assessment_result,
-        })
-        
+        await self.profile_agent.process(
+            {
+                "action": "update_from_assessment",
+                "student_id": student_id,
+                "assessment_result": assessment_result,
+            }
+        )
+
         # Step 6: Store assessment in database
         await supabase_manager.store_assessment(
-            result=type('Obj', (), assessment_result)()  # Convert dict to object-like
+            result=type("Obj", (), assessment_result)()  # Convert dict to object-like
         )
-        
+
         # Step 7: Get remediation if needed (Agent F)
         remediation = None
         if assessment_result.get("misconceptions"):
-            remediation = await self.evaluation_agent.process({
-                "action": "get_remediation",
-                "student_id": student_id,
-                "misconceptions": assessment_result["misconceptions"],
-            })
-        
+            remediation = await self.evaluation_agent.process(
+                {
+                    "action": "get_remediation",
+                    "student_id": student_id,
+                    "misconceptions": assessment_result["misconceptions"],
+                }
+            )
+
         return {
             "assessment_id": assessment_id,
             "result": assessment_result,
@@ -244,11 +271,13 @@ class AgentOrchestrator:
         """
         Get the complete learning path for a student in a subject.
         """
-        return await self.curriculum_agent.process({
-            "action": "get_learning_path",
-            "student_id": student_id,
-            "subject_code": subject_code,
-        })
+        return await self.curriculum_agent.process(
+            {
+                "action": "get_learning_path",
+                "student_id": student_id,
+                "subject_code": subject_code,
+            }
+        )
 
     async def generate_exam(
         self,
@@ -262,19 +291,19 @@ class AgentOrchestrator:
         Generate an exam for a topic.
         """
         # Get VR analogy context for visual question enrichment
-        analogy_context = self.pedagogy_agent.get_vr_elements(
-            subject_code, topic_code
-        )
+        analogy_context = self.pedagogy_agent.get_vr_elements(subject_code, topic_code)
 
-        return await self.evaluation_agent.process({
-            "action": "generate_exam",
-            "student_id": student_id,
-            "subject_code": subject_code,
-            "topic_code": topic_code,
-            "topic_name": topic_name,
-            "num_questions": num_questions,
-            "analogy_context": analogy_context,
-        })
+        return await self.evaluation_agent.process(
+            {
+                "action": "generate_exam",
+                "student_id": student_id,
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": topic_name,
+                "num_questions": num_questions,
+                "analogy_context": analogy_context,
+            }
+        )
 
     async def grade_exam(
         self,
@@ -284,11 +313,13 @@ class AgentOrchestrator:
         """
         Grade an exam and provide feedback.
         """
-        return await self.evaluation_agent.process({
-            "action": "evaluate_exam",
-            "exam": exam,
-            "responses": responses,
-        })
+        return await self.evaluation_agent.process(
+            {
+                "action": "evaluate_exam",
+                "exam": exam,
+                "responses": responses,
+            }
+        )
 
     async def get_student_recommendations(
         self,
@@ -297,10 +328,12 @@ class AgentOrchestrator:
         """
         Get personalized learning recommendations for a student.
         """
-        return await self.profile_agent.process({
-            "action": "get_recommendations",
-            "student_id": student_id,
-        })
+        return await self.profile_agent.process(
+            {
+                "action": "get_recommendations",
+                "student_id": student_id,
+            }
+        )
 
     async def run_onboarding_assessment(
         self,
@@ -310,10 +343,10 @@ class AgentOrchestrator:
     ) -> Dict[str, Any]:
         """
         Run an onboarding assessment for a student on a specific topic.
-        
+
         Generates diagnostic questions for the given topic to establish
         baseline knowledge.
-        
+
         Returns:
             Assessment with questions covering the specified topic
         """
@@ -321,7 +354,7 @@ class AgentOrchestrator:
         syllabus = self.curriculum_agent.get_syllabus(subject_code)
         if "error" in syllabus:
             return syllabus
-        
+
         # Find the specific topic
         all_topics = syllabus.get("topics", [])
         target_topic = None
@@ -329,10 +362,12 @@ class AgentOrchestrator:
             if t["topic_code"] == topic_code:
                 target_topic = t
                 break
-        
+
         if not target_topic:
-            return {"error": f"Topic '{topic_code}' not found in subject '{subject_code}'"}
-        
+            return {
+                "error": f"Topic '{topic_code}' not found in subject '{subject_code}'"
+            }
+
         # Generate diagnostic questions for this topic
         all_questions = []
         total_marks = 0
@@ -342,21 +377,23 @@ class AgentOrchestrator:
             subject_code, target_topic["topic_code"]
         )
 
-        questions_result = await self.assessment_agent.process({
-            "action": "generate_questions",
-            "subject_code": subject_code,
-            "topic_code": target_topic["topic_code"],
-            "topic_name": target_topic["topic_name"],
-            "stage": AssessmentStage.INITIAL.value,
-            "context": f"Generate 20-25 diagnostic questions for onboarding on topic: {target_topic['topic_name']}. Cover subtopics thoroughly: {', '.join(target_topic.get('subtopics', []))}. Ensure broad coverage across all subtopics.",
-            "analogy_context": analogy_context,
-        })
-        
+        questions_result = await self.assessment_agent.process(
+            {
+                "action": "generate_questions",
+                "subject_code": subject_code,
+                "topic_code": target_topic["topic_code"],
+                "topic_name": target_topic["topic_name"],
+                "stage": AssessmentStage.INITIAL.value,
+                "context": f"Generate 20-25 diagnostic questions for onboarding on topic: {target_topic['topic_name']}. Cover subtopics thoroughly: {', '.join(target_topic.get('subtopics', []))}. Ensure broad coverage across all subtopics.",
+                "analogy_context": analogy_context,
+            }
+        )
+
         for q in questions_result.get("questions", []):
             q["source_topic"] = target_topic["topic_code"]
             all_questions.append(q)
             total_marks += q.get("max_marks", 1)
-        
+
         return {
             "assessment_id": str(uuid.uuid4()),
             "assessment_type": "onboarding",
@@ -383,17 +420,19 @@ class AgentOrchestrator:
     ) -> Dict[str, Any]:
         """
         Submit onboarding assessment for a specific topic and get results.
-        
+
         Returns:
             Profile update + topic score + recommended learning path
         """
         # Evaluate MCQ answers
-        mcq_result = await self.assessment_agent.process({
-            "action": "evaluate_mcq",
-            "questions": questions,
-            "responses": responses,
-        })
-        
+        mcq_result = await self.assessment_agent.process(
+            {
+                "action": "evaluate_mcq",
+                "questions": questions,
+                "responses": responses,
+            }
+        )
+
         percentage = mcq_result.get("percentage", 0)
         topic_scores = {
             topic_code: {
@@ -402,7 +441,7 @@ class AgentOrchestrator:
                 "total": mcq_result.get("total_questions", 0),
             }
         }
-        
+
         # Classify topic strength
         all_weak_topics = []
         all_strong_topics = []
@@ -410,26 +449,30 @@ class AgentOrchestrator:
             all_strong_topics.append(topic_code)
         elif percentage < 40:
             all_weak_topics.append(topic_code)
-        
+
         # Update profile with results
-        await self.profile_agent.process({
-            "action": "update_from_assessment",
-            "student_id": student_id,
-            "assessment_result": {
-                "subject_code": subject_code,
-                "topic_code": topic_code,
-                "weak_concepts": all_weak_topics,
-                "strong_concepts": all_strong_topics,
-            },
-        })
-        
+        await self.profile_agent.process(
+            {
+                "action": "update_from_assessment",
+                "student_id": student_id,
+                "assessment_result": {
+                    "subject_code": subject_code,
+                    "topic_code": topic_code,
+                    "weak_concepts": all_weak_topics,
+                    "strong_concepts": all_strong_topics,
+                },
+            }
+        )
+
         # Get personalized learning path
-        learning_path = await self.curriculum_agent.process({
-            "action": "get_learning_path",
-            "student_id": student_id,
-            "subject_code": subject_code,
-        })
-        
+        learning_path = await self.curriculum_agent.process(
+            {
+                "action": "get_learning_path",
+                "student_id": student_id,
+                "subject_code": subject_code,
+            }
+        )
+
         return {
             "assessment_id": assessment_id,
             "topic_code": topic_code,
@@ -450,18 +493,20 @@ class AgentOrchestrator:
     ) -> Dict[str, Any]:
         """
         Generate complete teaching content for a topic with VR instructions.
-        
+
         This is the main content delivery endpoint.
-        
+
         Returns:
             Lesson content with pedagogy plan and VR session
         """
         # Get learner profile
-        profile_result = await self.profile_agent.process({
-            "action": "get_profile",
-            "student_id": student_id,
-        })
-        
+        profile_result = await self.profile_agent.process(
+            {
+                "action": "get_profile",
+                "student_id": student_id,
+            }
+        )
+
         # Get curriculum plan for the topic
         curriculum_plan = {
             "topic_code": topic_code,
@@ -470,7 +515,7 @@ class AgentOrchestrator:
             "depth": "conceptual+visual",
             "subtopics": [],
         }
-        
+
         # Get syllabus details for the topic
         syllabus = self.curriculum_agent.get_syllabus(subject_code)
         if "topics" in syllabus:
@@ -478,18 +523,22 @@ class AgentOrchestrator:
                 if t["topic_code"] == topic_code:
                     curriculum_plan["subtopics"] = t.get("subtopics", [])
                     curriculum_plan["topic_name"] = t.get("topic_name", topic_name)
-                    curriculum_plan["estimated_duration_minutes"] = t.get("estimated_minutes", 30)
+                    curriculum_plan["estimated_duration_minutes"] = t.get(
+                        "estimated_minutes", 30
+                    )
                     break
-        
+
         # Get pedagogy plan (how to teach)
-        pedagogy_result = await self.pedagogy_agent.process({
-            "action": "get_teaching_plan",
-            "student_id": student_id,
-            "subject_code": subject_code,
-            "topic_code": topic_code,
-            "topic_name": curriculum_plan["topic_name"],
-        })
-        
+        pedagogy_result = await self.pedagogy_agent.process(
+            {
+                "action": "get_teaching_plan",
+                "student_id": student_id,
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": curriculum_plan["topic_name"],
+            }
+        )
+
         # Generate actual lesson content
         lesson_content = await self.pedagogy_agent.generate_lesson_content(
             topic_name=curriculum_plan["topic_name"],
@@ -498,9 +547,23 @@ class AgentOrchestrator:
             pedagogy_plan=pedagogy_result,
             learning_style=profile_result.get("learning_style"),
         )
-        
+
+        # Build VR scene plan (Agent G)
+        lesson_id = str(uuid.uuid4())
+        scene_plan = await self.scene_builder.process(
+            {
+                "action": "build_scene",
+                "session_id": lesson_id,
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": curriculum_plan["topic_name"],
+                "pedagogy_plan": pedagogy_result,
+                "learner_profile": profile_result,
+            }
+        )
+
         return {
-            "lesson_id": str(uuid.uuid4()),
+            "lesson_id": lesson_id,
             "student_id": student_id,
             "subject_code": subject_code,
             "topic_code": topic_code,
@@ -508,6 +571,7 @@ class AgentOrchestrator:
             "curriculum_plan": curriculum_plan,
             "pedagogy_plan": pedagogy_result,
             "lesson_content": lesson_content,
+            "scene_plan": scene_plan,
             "learning_style": profile_result.get("learning_style"),
         }
 
@@ -542,10 +606,17 @@ class AgentOrchestrator:
                 break
 
         if not target_topic:
-            yield {"event": "error", "error": f"Topic '{topic_code}' not found in subject '{subject_code}'"}
+            yield {
+                "event": "error",
+                "error": f"Topic '{topic_code}' not found in subject '{subject_code}'",
+            }
             return
 
-        yield {"event": "progress", "step": f"Generating questions for {target_topic['topic_name']}...", "progress": 20}
+        yield {
+            "event": "progress",
+            "step": f"Generating questions for {target_topic['topic_name']}...",
+            "progress": 20,
+        }
 
         all_questions = []
         total_marks = 0
@@ -555,22 +626,28 @@ class AgentOrchestrator:
             subject_code, target_topic["topic_code"]
         )
 
-        questions_result = await self.assessment_agent.process({
-            "action": "generate_questions",
-            "subject_code": subject_code,
-            "topic_code": target_topic["topic_code"],
-            "topic_name": target_topic["topic_name"],
-            "stage": AssessmentStage.INITIAL.value,
-            "context": f"Generate 20-25 diagnostic questions for onboarding on topic: {target_topic['topic_name']}. Cover subtopics thoroughly: {', '.join(target_topic.get('subtopics', []))}. Ensure broad coverage across all subtopics.",
-            "analogy_context": analogy_context,
-        })
+        questions_result = await self.assessment_agent.process(
+            {
+                "action": "generate_questions",
+                "subject_code": subject_code,
+                "topic_code": target_topic["topic_code"],
+                "topic_name": target_topic["topic_name"],
+                "stage": AssessmentStage.INITIAL.value,
+                "context": f"Generate 20-25 diagnostic questions for onboarding on topic: {target_topic['topic_name']}. Cover subtopics thoroughly: {', '.join(target_topic.get('subtopics', []))}. Ensure broad coverage across all subtopics.",
+                "analogy_context": analogy_context,
+            }
+        )
 
         for q in questions_result.get("questions", []):
             q["source_topic"] = target_topic["topic_code"]
             all_questions.append(q)
             total_marks += q.get("max_marks", 1)
 
-        yield {"event": "progress", "step": f"✓ {target_topic['topic_name']} — {len(all_questions)} questions generated", "progress": 80}
+        yield {
+            "event": "progress",
+            "step": f"✓ {target_topic['topic_name']} — {len(all_questions)} questions generated",
+            "progress": 80,
+        }
 
         result = {
             "assessment_id": str(uuid.uuid4()),
@@ -599,14 +676,20 @@ class AgentOrchestrator:
         responses: List[Dict[str, Any]],
     ):
         """Stream onboarding submission for a specific topic with progress events."""
-        yield {"event": "progress", "step": f"Evaluating {topic_code}...", "progress": 10}
+        yield {
+            "event": "progress",
+            "step": f"Evaluating {topic_code}...",
+            "progress": 10,
+        }
 
         # Evaluate MCQ answers
-        mcq_result = await self.assessment_agent.process({
-            "action": "evaluate_mcq",
-            "questions": questions,
-            "responses": responses,
-        })
+        mcq_result = await self.assessment_agent.process(
+            {
+                "action": "evaluate_mcq",
+                "questions": questions,
+                "responses": responses,
+            }
+        )
 
         percentage = mcq_result.get("percentage", 0)
         topic_scores = {
@@ -625,26 +708,38 @@ class AgentOrchestrator:
         elif percentage < 40:
             all_weak_topics.append(topic_code)
 
-        yield {"event": "progress", "step": "Updating learner profile...", "progress": 50}
+        yield {
+            "event": "progress",
+            "step": "Updating learner profile...",
+            "progress": 50,
+        }
 
-        await self.profile_agent.process({
-            "action": "update_from_assessment",
-            "student_id": student_id,
-            "assessment_result": {
+        await self.profile_agent.process(
+            {
+                "action": "update_from_assessment",
+                "student_id": student_id,
+                "assessment_result": {
+                    "subject_code": subject_code,
+                    "topic_code": topic_code,
+                    "weak_concepts": all_weak_topics,
+                    "strong_concepts": all_strong_topics,
+                },
+            }
+        )
+
+        yield {
+            "event": "progress",
+            "step": "Generating learning path...",
+            "progress": 75,
+        }
+
+        learning_path = await self.curriculum_agent.process(
+            {
+                "action": "get_learning_path",
+                "student_id": student_id,
                 "subject_code": subject_code,
-                "topic_code": topic_code,
-                "weak_concepts": all_weak_topics,
-                "strong_concepts": all_strong_topics,
-            },
-        })
-
-        yield {"event": "progress", "step": "Generating learning path...", "progress": 75}
-
-        learning_path = await self.curriculum_agent.process({
-            "action": "get_learning_path",
-            "student_id": student_id,
-            "subject_code": subject_code,
-        })
+            }
+        )
 
         result = {
             "assessment_id": assessment_id,
@@ -667,12 +762,18 @@ class AgentOrchestrator:
         """Stream session start with progress events."""
         session_id = str(uuid.uuid4())
 
-        yield {"event": "progress", "step": "Loading learner profile...", "progress": 10}
+        yield {
+            "event": "progress",
+            "step": "Loading learner profile...",
+            "progress": 10,
+        }
 
-        profile_result = await self.profile_agent.process({
-            "action": "get_profile",
-            "student_id": student_id,
-        })
+        profile_result = await self.profile_agent.process(
+            {
+                "action": "get_profile",
+                "student_id": student_id,
+            }
+        )
 
         if "error" in profile_result:
             yield {"event": "error", "error": profile_result["error"]}
@@ -680,30 +781,50 @@ class AgentOrchestrator:
 
         yield {"event": "progress", "step": "Determining next topic...", "progress": 30}
 
-        curriculum_result = await self.curriculum_agent.process({
-            "action": "get_next_topic",
-            "student_id": student_id,
-            "subject_code": subject_code,
-        })
+        curriculum_result = await self.curriculum_agent.process(
+            {
+                "action": "get_next_topic",
+                "student_id": student_id,
+                "subject_code": subject_code,
+            }
+        )
 
-        if "message" in curriculum_result and "All topics mastered" in curriculum_result.get("message", ""):
-            yield {"event": "result", "data": {
-                "session_id": session_id, "status": "completed",
-                "message": curriculum_result["message"],
-            }, "progress": 100}
+        if (
+            "message" in curriculum_result
+            and "All topics mastered" in curriculum_result.get("message", "")
+        ):
+            yield {
+                "event": "result",
+                "data": {
+                    "session_id": session_id,
+                    "status": "completed",
+                    "message": curriculum_result["message"],
+                },
+                "progress": 100,
+            }
             return
 
-        yield {"event": "progress", "step": f"Planning pedagogy for {curriculum_result.get('topic_name', '')}...", "progress": 55}
+        yield {
+            "event": "progress",
+            "step": f"Planning pedagogy for {curriculum_result.get('topic_name', '')}...",
+            "progress": 55,
+        }
 
-        pedagogy_result = await self.pedagogy_agent.process({
-            "action": "get_teaching_plan",
-            "student_id": student_id,
-            "subject_code": subject_code,
-            "topic_code": curriculum_result.get("topic_code"),
-            "topic_name": curriculum_result.get("topic_name"),
-        })
+        pedagogy_result = await self.pedagogy_agent.process(
+            {
+                "action": "get_teaching_plan",
+                "student_id": student_id,
+                "subject_code": subject_code,
+                "topic_code": curriculum_result.get("topic_code"),
+                "topic_name": curriculum_result.get("topic_name"),
+            }
+        )
 
-        yield {"event": "progress", "step": "Generating lesson content...", "progress": 75}
+        yield {
+            "event": "progress",
+            "step": "Generating lesson content...",
+            "progress": 75,
+        }
 
         lesson_content = await self.pedagogy_agent.generate_lesson_content(
             topic_name=curriculum_result.get("topic_name", ""),
@@ -732,16 +853,27 @@ class AgentOrchestrator:
         topic_code: str,
         topic_name: Optional[str] = None,
     ):
-        """Stream teaching content generation with progress events."""
-        yield {"event": "progress", "step": "Loading learner profile...", "progress": 10}
+        """
+        Stream teaching content generation with ACTUAL content chunks.
 
-        profile_result = await self.profile_agent.process({
-            "action": "get_profile",
-            "student_id": student_id,
-        })
+        Events emitted (in order):
+        - profile: learner profile data
+        - curriculum: curriculum plan
+        - pedagogy: pedagogy plan (analogy, visualization, strategies)
+        - section: one event per lesson section (subtopic content)
+        - scene: VR scene plan
+        - complete: summary metadata
+        """
+        # 1. Load learner profile
+        profile_result = await self.profile_agent.process(
+            {
+                "action": "get_profile",
+                "student_id": student_id,
+            }
+        )
+        yield {"event": "profile", "data": profile_result}
 
-        yield {"event": "progress", "step": "Fetching curriculum plan...", "progress": 25}
-
+        # 2. Build curriculum plan
         curriculum_plan = {
             "topic_code": topic_code,
             "topic_name": topic_name or topic_code,
@@ -756,21 +888,26 @@ class AgentOrchestrator:
                 if t["topic_code"] == topic_code:
                     curriculum_plan["subtopics"] = t.get("subtopics", [])
                     curriculum_plan["topic_name"] = t.get("topic_name", topic_name)
-                    curriculum_plan["estimated_duration_minutes"] = t.get("estimated_minutes", 30)
+                    curriculum_plan["estimated_duration_minutes"] = t.get(
+                        "estimated_minutes", 30
+                    )
                     break
 
-        yield {"event": "progress", "step": f"Designing pedagogy for {curriculum_plan['topic_name']}...", "progress": 40}
+        yield {"event": "curriculum", "data": curriculum_plan}
 
-        pedagogy_result = await self.pedagogy_agent.process({
-            "action": "get_teaching_plan",
-            "student_id": student_id,
-            "subject_code": subject_code,
-            "topic_code": topic_code,
-            "topic_name": curriculum_plan["topic_name"],
-        })
+        # 3. Generate pedagogy plan
+        pedagogy_result = await self.pedagogy_agent.process(
+            {
+                "action": "get_teaching_plan",
+                "student_id": student_id,
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": curriculum_plan["topic_name"],
+            }
+        )
+        yield {"event": "pedagogy", "data": pedagogy_result}
 
-        yield {"event": "progress", "step": "Generating lesson content...", "progress": 65}
-
+        # 4. Generate lesson content and stream each section
         lesson_content = await self.pedagogy_agent.generate_lesson_content(
             topic_name=curriculum_plan["topic_name"],
             subject_code=subject_code,
@@ -779,19 +916,87 @@ class AgentOrchestrator:
             learning_style=profile_result.get("learning_style"),
         )
 
-        result = {
-            "lesson_id": str(uuid.uuid4()),
-            "student_id": student_id,
-            "subject_code": subject_code,
-            "topic_code": topic_code,
-            "topic_name": curriculum_plan["topic_name"],
-            "curriculum_plan": curriculum_plan,
-            "pedagogy_plan": pedagogy_result,
-            "lesson_content": lesson_content,
-            "learning_style": profile_result.get("learning_style"),
+        # Yield each section individually
+        sections = lesson_content.get("sections", [])
+        for idx, section in enumerate(sections):
+            yield {
+                "event": "section",
+                "data": section,
+                "index": idx,
+                "total": len(sections),
+            }
+
+        # 5a. Build VR scene (Agent G)
+        lesson_id = str(uuid.uuid4())
+        scene_plan = await self.scene_builder.process(
+            {
+                "action": "build_scene",
+                "session_id": lesson_id,
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": curriculum_plan["topic_name"],
+                "pedagogy_plan": pedagogy_result,
+                "learner_profile": profile_result,
+            }
+        )
+        # Inject asset_bindings from Agent G so Agent E can embed prefab paths
+        # in generated C# [SerializeField] references.
+        scene_plan["asset_bindings"] = self.scene_builder.get_asset_bindings(
+            subject_code, topic_code
+        )
+        yield {"event": "scene", "data": scene_plan}
+
+        # 5b. Generate C# scripts via Agent E's token-streaming ReAct loop.
+        #     Each script streams token-by-token as the LLM writes it.
+        yield {
+            "event": "progress",
+            "step": "Generating Unity C# scripts...",
+            "progress": 80,
+        }
+        script_package: Dict[str, Any] = {}
+        async for event in self.vr_agent.generate_lesson_instructions_stream(
+            curriculum_plan={
+                **curriculum_plan,
+                "session_id": lesson_id,
+                "student_id": student_id,
+            },
+            pedagogy_plan=pedagogy_result,
+            scene_plan=scene_plan,
+        ):
+            if event.get("event") == "__package__":
+                # Internal sentinel — capture the assembled package; do NOT forward
+                script_package = event["data"]
+            else:
+                # Forward every other event (csharp_thinking, csharp_script_start,
+                # csharp_script_token, csharp_script_complete, csharp_patch_*,
+                # csharp_review, progress) directly to the SSE stream
+                yield event
+
+        yield {
+            "event": "scripts_complete",
+            "data": {
+                "session_id": lesson_id,
+                "total_scripts": script_package.get("total_scripts", 0),
+                "entry_point": script_package.get("entry_point"),
+            },
         }
 
-        yield {"event": "result", "data": result, "progress": 100}
+        # 6. Final completion event with summary metadata
+        yield {
+            "event": "complete",
+            "data": {
+                "lesson_id": lesson_id,
+                "student_id": student_id,
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": curriculum_plan["topic_name"],
+                "learning_style": profile_result.get("learning_style"),
+                "total_sections": len(sections),
+                "total_scripts": script_package.get("total_scripts", 0),
+                "entry_point": script_package.get("entry_point"),
+                "scene_type": scene_plan.get("opening_scene", {}).get("scene_id"),
+            },
+        }
 
     async def generate_assessment_stream(
         self,
@@ -801,7 +1006,11 @@ class AgentOrchestrator:
         topic_name: Optional[str] = None,
     ):
         """Stream assessment generation with progress events."""
-        yield {"event": "progress", "step": "Generating diagnostic questions...", "progress": 20}
+        yield {
+            "event": "progress",
+            "step": "Generating diagnostic questions...",
+            "progress": 20,
+        }
 
         # Get VR analogy context for visual question enrichment
         analogy_context = None
@@ -810,14 +1019,16 @@ class AgentOrchestrator:
                 subject_code, topic_code
             )
 
-        questions_result = await self.assessment_agent.process({
-            "action": "generate_questions",
-            "subject_code": subject_code,
-            "topic_code": topic_code,
-            "topic_name": topic_name,
-            "stage": AssessmentStage.INITIAL.value,
-            "analogy_context": analogy_context,
-        })
+        questions_result = await self.assessment_agent.process(
+            {
+                "action": "generate_questions",
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": topic_name,
+                "stage": AssessmentStage.INITIAL.value,
+                "analogy_context": analogy_context,
+            }
+        )
 
         result = {
             "assessment_id": str(uuid.uuid4()),
@@ -826,7 +1037,9 @@ class AgentOrchestrator:
             "topic_code": topic_code,
             "questions": questions_result.get("questions", []),
             "total_marks": questions_result.get("total_marks", 0),
-            "estimated_time_minutes": questions_result.get("estimated_time_minutes", 15),
+            "estimated_time_minutes": questions_result.get(
+                "estimated_time_minutes", 15
+            ),
         }
 
         yield {"event": "result", "data": result, "progress": 100}
@@ -844,76 +1057,107 @@ class AgentOrchestrator:
         """Stream assessment submission with progress events."""
         yield {"event": "progress", "step": "Evaluating MCQ answers...", "progress": 10}
 
-        mcq_result = await self.assessment_agent.process({
-            "action": "evaluate_mcq",
-            "questions": questions,
-            "responses": responses,
-        })
+        mcq_result = await self.assessment_agent.process(
+            {
+                "action": "evaluate_mcq",
+                "questions": questions,
+                "responses": responses,
+            }
+        )
 
-        yield {"event": "progress", "step": "Evaluating descriptive answers...", "progress": 30}
+        yield {
+            "event": "progress",
+            "step": "Evaluating descriptive answers...",
+            "progress": 30,
+        }
 
         descriptive_results = []
         for q in questions:
             if q["question_type"] in ["descriptive", "numerical"]:
                 response = next(
-                    (r for r in responses if r["question_id"] == q["question_id"]),
-                    None
+                    (r for r in responses if r["question_id"] == q["question_id"]), None
                 )
                 if response:
-                    eval_result = await self.assessment_agent.process({
-                        "action": "evaluate_descriptive",
-                        "question": q,
-                        "student_answer": response["answer"],
-                    })
+                    eval_result = await self.assessment_agent.process(
+                        {
+                            "action": "evaluate_descriptive",
+                            "question": q,
+                            "student_answer": response["answer"],
+                        }
+                    )
                     descriptive_results.append(eval_result)
 
-        yield {"event": "progress", "step": "Identifying misconceptions...", "progress": 50}
+        yield {
+            "event": "progress",
+            "step": "Identifying misconceptions...",
+            "progress": 50,
+        }
 
         misconceptions = {}
         if mcq_result.get("wrong_answers"):
-            misconceptions = await self.assessment_agent.process({
-                "action": "identify_misconceptions",
-                "topic_name": topic_name or topic_code,
-                "wrong_answers": mcq_result["wrong_answers"],
-            })
+            misconceptions = await self.assessment_agent.process(
+                {
+                    "action": "identify_misconceptions",
+                    "topic_name": topic_name or topic_code,
+                    "wrong_answers": mcq_result["wrong_answers"],
+                }
+            )
 
-        yield {"event": "progress", "step": "Calculating final result...", "progress": 65}
+        yield {
+            "event": "progress",
+            "step": "Calculating final result...",
+            "progress": 65,
+        }
 
-        assessment_result = await self.assessment_agent.process({
-            "action": "calculate_result",
-            "student_id": student_id,
-            "subject_code": subject_code,
-            "topic_code": topic_code,
-            "topic_name": topic_name,
-            "evaluations": {
-                "mcq_results": mcq_result,
-                "descriptive_results": descriptive_results,
-                "misconceptions": misconceptions,
-            },
-        })
+        assessment_result = await self.assessment_agent.process(
+            {
+                "action": "calculate_result",
+                "student_id": student_id,
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": topic_name,
+                "evaluations": {
+                    "mcq_results": mcq_result,
+                    "descriptive_results": descriptive_results,
+                    "misconceptions": misconceptions,
+                },
+            }
+        )
 
-        yield {"event": "progress", "step": "Updating learner profile...", "progress": 80}
+        yield {
+            "event": "progress",
+            "step": "Updating learner profile...",
+            "progress": 80,
+        }
 
-        await self.profile_agent.process({
-            "action": "update_from_assessment",
-            "student_id": student_id,
-            "assessment_result": assessment_result,
-        })
+        await self.profile_agent.process(
+            {
+                "action": "update_from_assessment",
+                "student_id": student_id,
+                "assessment_result": assessment_result,
+            }
+        )
 
         yield {"event": "progress", "step": "Storing assessment...", "progress": 85}
 
         await supabase_manager.store_assessment(
-            result=type('Obj', (), assessment_result)()
+            result=type("Obj", (), assessment_result)()
         )
 
         remediation = None
         if assessment_result.get("misconceptions"):
-            yield {"event": "progress", "step": "Getting remediation suggestions...", "progress": 92}
-            remediation = await self.evaluation_agent.process({
-                "action": "get_remediation",
-                "student_id": student_id,
-                "misconceptions": assessment_result["misconceptions"],
-            })
+            yield {
+                "event": "progress",
+                "step": "Getting remediation suggestions...",
+                "progress": 92,
+            }
+            remediation = await self.evaluation_agent.process(
+                {
+                    "action": "get_remediation",
+                    "student_id": student_id,
+                    "misconceptions": assessment_result["misconceptions"],
+                }
+            )
 
         result = {
             "assessment_id": assessment_id,
@@ -932,22 +1176,26 @@ class AgentOrchestrator:
         num_questions: int = 10,
     ):
         """Stream exam generation with progress events."""
-        yield {"event": "progress", "step": "Generating exam questions...", "progress": 20}
+        yield {
+            "event": "progress",
+            "step": "Generating exam questions...",
+            "progress": 20,
+        }
 
         # Get VR analogy context for visual question enrichment
-        analogy_context = self.pedagogy_agent.get_vr_elements(
-            subject_code, topic_code
-        )
+        analogy_context = self.pedagogy_agent.get_vr_elements(subject_code, topic_code)
 
-        result = await self.evaluation_agent.process({
-            "action": "generate_exam",
-            "student_id": student_id,
-            "subject_code": subject_code,
-            "topic_code": topic_code,
-            "topic_name": topic_name,
-            "num_questions": num_questions,
-            "analogy_context": analogy_context,
-        })
+        result = await self.evaluation_agent.process(
+            {
+                "action": "generate_exam",
+                "student_id": student_id,
+                "subject_code": subject_code,
+                "topic_code": topic_code,
+                "topic_name": topic_name,
+                "num_questions": num_questions,
+                "analogy_context": analogy_context,
+            }
+        )
 
         yield {"event": "result", "data": result, "progress": 100}
 
@@ -959,11 +1207,13 @@ class AgentOrchestrator:
         """Stream exam grading with progress events."""
         yield {"event": "progress", "step": "Grading exam...", "progress": 20}
 
-        result = await self.evaluation_agent.process({
-            "action": "evaluate_exam",
-            "exam": exam,
-            "responses": responses,
-        })
+        result = await self.evaluation_agent.process(
+            {
+                "action": "evaluate_exam",
+                "exam": exam,
+                "responses": responses,
+            }
+        )
 
         yield {"event": "result", "data": result, "progress": 100}
 

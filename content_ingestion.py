@@ -23,7 +23,7 @@ from langchain_openai import AzureOpenAIEmbeddings
 from langchain_anthropic import ChatAnthropic
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 # ============================================================================

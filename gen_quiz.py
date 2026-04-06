@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from pinecone import Pinecone
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 # ------------------------ Pinecone connection ------------------------

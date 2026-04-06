@@ -13,8 +13,10 @@ from pydantic import BaseModel, Field
 
 # ========================= AVATAR CONTRACTS =========================
 
+
 class AvatarActionType(str, Enum):
     """Allowed avatar actions in VR."""
+
     IDLE = "idle"
     WALK = "walk"
     EXPLAIN = "explain"
@@ -32,6 +34,7 @@ class AvatarActionType(str, Enum):
 
 class AvatarCharacter(str, Enum):
     """Available avatar characters."""
+
     TEACHER = "teacher"
     ASSISTANT = "assistant"
     STUDENT_HELPER = "student_helper"
@@ -42,6 +45,7 @@ class AvatarAction(BaseModel):
     Avatar control instruction for Unity.
     Unity handles: animation playback, IK, positioning.
     """
+
     character: AvatarCharacter = AvatarCharacter.TEACHER
     action: AvatarActionType
     target: Optional[str] = None  # Object to point at, look at, etc.
@@ -50,8 +54,10 @@ class AvatarAction(BaseModel):
 
 # ========================= VOICE CONTRACTS =========================
 
+
 class VoiceEmotion(str, Enum):
     """Emotion for TTS voice synthesis."""
+
     NEUTRAL = "neutral"
     ENCOURAGING = "encouraging"
     FRIENDLY = "friendly"
@@ -63,6 +69,7 @@ class VoiceEmotion(str, Enum):
 
 class VoicePace(str, Enum):
     """Speaking pace."""
+
     SLOW = "slow"
     NORMAL = "normal"
     FAST = "fast"
@@ -73,13 +80,14 @@ class VoiceCommand(BaseModel):
     Voice/dialogue instruction for Unity.
     Unity handles: TTS synthesis, lip sync, audio playback.
     """
+
     text: str
     emotion: VoiceEmotion = VoiceEmotion.FRIENDLY
     pace: VoicePace = VoicePace.NORMAL
-    
+
     # Optional: specific pronunciation hints
     phonetic_hints: Optional[Dict[str, str]] = None
-    
+
     # Timing
     delay_before_seconds: float = 0.0
     wait_for_completion: bool = True
@@ -87,8 +95,10 @@ class VoiceCommand(BaseModel):
 
 # ========================= VISUAL CONTRACTS =========================
 
+
 class MotionType(str, Enum):
     """Types of physics motions for simulations."""
+
     PROJECTILE = "projectile"
     LINEAR = "linear"
     CIRCULAR = "circular"
@@ -102,25 +112,26 @@ class VisualCommand(BaseModel):
     Visual/physics instruction for Unity.
     Unity handles: object spawning, physics simulation, rendering.
     """
+
     object: str  # Object identifier (must exist in Unity asset library)
-    
+
     # Motion parameters
     motion: Optional[MotionType] = None
     angle: Optional[float] = None  # degrees
     velocity: Optional[float] = None  # m/s
     acceleration: Optional[float] = None  # m/s²
-    
+
     # Display options
     show_trajectory: bool = False
     show_vectors: bool = False
     show_labels: bool = False
     highlight: bool = False
-    
+
     # Position (relative to scene origin)
     position: Optional[Dict[str, float]] = None  # {x, y, z}
     rotation: Optional[Dict[str, float]] = None  # {x, y, z} in degrees
     scale: Optional[float] = 1.0
-    
+
     # Animation
     animate: bool = True
     loop_animation: bool = False
@@ -129,8 +140,10 @@ class VisualCommand(BaseModel):
 
 # ========================= INTERACTION CONTRACTS =========================
 
+
 class InteractionType(str, Enum):
     """Types of user interactions in VR."""
+
     SLIDER = "slider"
     BUTTON = "button"
     GRAB = "grab"
@@ -146,22 +159,23 @@ class InteractionCommand(BaseModel):
     Interaction setup instruction for Unity.
     Unity handles: UI rendering, input capture, event handling.
     """
+
     type: InteractionType
     parameter: str  # What this interaction controls (e.g., "angle", "velocity")
-    
+
     # For slider/numerical inputs
     range: Optional[List[float]] = None  # [min, max]
     default: Optional[float] = None
     step: Optional[float] = None
-    
+
     # For button/selection
     options: Optional[List[str]] = None
-    
+
     # Display
     label: Optional[str] = None
     tooltip: Optional[str] = None
     position: Optional[str] = None  # "left", "right", "center", "floating"
-    
+
     # Behavior
     required: bool = False
     timeout_seconds: Optional[float] = None
@@ -169,8 +183,10 @@ class InteractionCommand(BaseModel):
 
 # ========================= ASSESSMENT CONTRACTS =========================
 
+
 class AssessmentType(str, Enum):
     """Types of in-VR assessments."""
+
     MCQ = "mcq"
     DESCRIPTIVE = "descriptive"
     NUMERICAL = "numerical"
@@ -180,6 +196,7 @@ class AssessmentType(str, Enum):
 
 class InputMode(str, Enum):
     """Input modes for assessment responses."""
+
     TEXT = "text"
     VOICE = "voice"
     SELECTION = "selection"
@@ -192,34 +209,37 @@ class AssessmentCommand(BaseModel):
     Assessment trigger instruction for Unity.
     Unity handles: UI display, input capture, response collection.
     """
+
     type: AssessmentType
     question_id: Optional[str] = None  # Unique ID for tracking responses
-    
+
     # Question content
     question: Optional[str] = None
     prompt: Optional[str] = None  # For descriptive
-    
+
     # For MCQ
     options: Optional[List[str]] = None
-    
+
     # For numerical
     unit: Optional[str] = None
     placeholder: Optional[str] = None
-    
+
     # Input configuration
     input_mode: InputMode = InputMode.SELECTION
-    
+
     # Timing
     time_limit_seconds: Optional[int] = None
-    
+
     # Feedback (filled by AI after response)
     show_immediate_feedback: bool = True
 
 
 # ========================= SCENE CONTRACTS =========================
 
+
 class SceneType(str, Enum):
     """Available VR scenes."""
+
     CLASSROOM = "classroom"
     CRICKET_GROUND = "cricket_ground"
     PHYSICS_LAB = "physics_lab"
@@ -228,6 +248,7 @@ class SceneType(str, Enum):
     OUTDOOR_FIELD = "outdoor_field"
     SPACE = "space"
     PLAYGROUND = "playground"
+    STADIUM = "stadium"  # Sports stadium for maths analogies
 
 
 class SceneCommand(BaseModel):
@@ -235,12 +256,13 @@ class SceneCommand(BaseModel):
     Scene setup instruction for Unity.
     Unity handles: scene loading, environment setup.
     """
+
     scene_id: SceneType
-    
+
     # Environment settings
     time_of_day: Optional[str] = "day"  # day, evening, night
     weather: Optional[str] = "clear"  # clear, cloudy, rain
-    
+
     # Camera
     initial_camera_position: Optional[str] = None  # Preset position name
     allow_free_movement: bool = True
@@ -248,42 +270,44 @@ class SceneCommand(BaseModel):
 
 # ========================= COMPLETE VR INSTRUCTION =========================
 
+
 class VRInstruction(BaseModel):
     """
     Complete VR instruction packet.
     This is the ONLY structure Unity consumes from the AI system.
     Agent E produces a list of these for each teaching session.
     """
+
     step_id: str
     sequence_order: int = 0
-    
+
     # Scene (only needed for first step or scene changes)
     scene: Optional[SceneCommand] = None
-    
+
     # Avatar behavior
     avatar: AvatarAction
-    
+
     # Dialogue
     voice: VoiceCommand
-    
+
     # Visual elements (optional)
     visual: Optional[VisualCommand] = None
-    
+
     # User interaction (optional)
     interaction: Optional[InteractionCommand] = None
-    
+
     # Assessment (optional)
     assessment: Optional[AssessmentCommand] = None
-    
+
     # Flow control
     wait_for_voice: bool = True
     wait_for_interaction: bool = False
     auto_advance_seconds: Optional[float] = None
-    
+
     # Metadata
     topic: Optional[str] = None
     concept: Optional[str] = None
-    
+
     def to_unity_json(self) -> dict:
         """Export as Unity-compatible JSON (excludes None values)."""
         return self.model_dump(exclude_none=True)
@@ -291,17 +315,19 @@ class VRInstruction(BaseModel):
 
 # ========================= SESSION CONTRACTS =========================
 
+
 class VRSession(BaseModel):
     """Complete VR teaching session."""
+
     session_id: str
     student_id: str
     subject: str
     topic: str
-    
+
     instructions: List[VRInstruction]
     total_steps: int
     estimated_duration_minutes: int
-    
+
     # State tracking
     current_step: int = 0
     completed: bool = False
@@ -309,13 +335,65 @@ class VRSession(BaseModel):
 
 class VRInteractionResponse(BaseModel):
     """Response from Unity when user interacts."""
+
     session_id: str
     step_id: str
     interaction_type: InteractionType
-    
+
     # Response data
     value: Optional[Any] = None  # Slider value, button choice, etc.
     text_input: Optional[str] = None  # For voice/text input
-    
+
     # Timing
     response_time_seconds: float
+
+
+# ========================= C# SCRIPT CONTRACTS =========================
+
+
+class CSharpScript(BaseModel):
+    """
+    A single generated Unity C# MonoBehaviour script produced by Agent E.
+
+    Each script corresponds to one lesson step and implements ILessonStep
+    so the SessionManager can call Execute() on it in sequence.
+    """
+
+    filename: str  # e.g. "ProjectileMotionController.cs"
+    class_name: str  # Must match the class declared inside the file
+    code: str  # Full C# source code
+    attach_to: str  # GameObject name this MonoBehaviour attaches to
+    step_type: str  # "session_manager"|"intro"|"demonstration"|"interaction"|"assessment"|"summary"
+    learning_objective: str  # What this script teaches / demonstrates
+    dependencies: List[str] = []  # Other class names this script depends on
+    sequence_order: int = 0  # Execution order within the lesson
+    validation_passed: bool = False  # True if heuristic syntax check passed
+    pedagogy_score: int = 0  # 0-10 score from pedagogical review
+
+
+class UnityScriptPackage(BaseModel):
+    """
+    Complete package of C# scripts for a teaching session.
+
+    This is Agent E's primary output when operating in agentAR mode.
+    VRSession / VRInstruction are still used for assessment-only flows.
+
+    Unity workflow:
+      1. Receive this package via SSE 'csharp_script' events.
+      2. Write each CSharpScript.code to disk as CSharpScript.filename.
+      3. Wait for Unity to compile (auto-compile or manual trigger).
+      4. If compile errors occur, POST them to /vr/script-feedback.
+      5. Attach each MonoBehaviour to its attach_to GameObject.
+      6. Start the lesson by activating the entry_point GameObject.
+    """
+
+    session_id: str
+    student_id: str
+    topic: str
+    subject: str
+    entry_point: str  # Class name Unity starts with (always SessionManager)
+    scripts: List[CSharpScript]
+    scene_manifest: dict  # Pass-through of Agent G's FullScenePlan output
+    total_scripts: int
+    estimated_duration_minutes: int
+    completed: bool = False

@@ -17,9 +17,12 @@ Outputs:
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from agents.base_agent import BaseAgent
+
+logger = logging.getLogger(__name__)
 from db.supabase_client import supabase_manager
 from models.schemas import (
     LearningStyle,
@@ -197,7 +200,7 @@ ANALOGY_BANK = {
 class PedagogyAgent(BaseAgent):
     """
     Agent D: Pedagogy & Analogy Agent.
-    
+
     Determines the optimal teaching approach based on:
     - Student's learning style
     - Topic characteristics
@@ -223,14 +226,14 @@ You specialize in STEM education and understand that different students learn di
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Main processing method.
-        
+
         Actions:
         - 'get_teaching_plan': Get complete pedagogy plan for a topic
         - 'select_analogy': Select best analogy for a topic
         - 'get_vr_elements': Get VR scene and object recommendations
         """
         action = input_data.get("action")
-        
+
         if action == "get_teaching_plan":
             return await self.get_teaching_plan(
                 student_id=input_data["student_id"],
@@ -262,7 +265,7 @@ You specialize in STEM education and understand that different students learn di
     ) -> Dict[str, Any]:
         """
         Generate a complete pedagogy plan for teaching a topic.
-        
+
         Returns:
             PedagogyPlan as dictionary
         """
@@ -270,67 +273,64 @@ You specialize in STEM education and understand that different students learn di
         profile = await supabase_manager.get_learner_profile(student_id)
         if not profile:
             return {"error": "Student profile not found"}
-        
+
         # Get available analogies for this topic
         available_analogies = self._get_available_analogies(subject_code, topic_code)
-        
+
         # Determine preferred analogy category based on student preferences
         preferred_category = self._select_best_category(
             profile.preferred_analogies,
             list(available_analogies.keys()),
         )
-        
+
         # Get analogy details
         analogy_data = available_analogies.get(preferred_category, {})
-        
-        # Use LLM to create detailed teaching plan
-        prompt = self._format_prompt(
-            task=f"""Create a detailed teaching plan for "{topic_name or topic_code}" in Class 10 {subject_code.upper()}.
 
-## Student Profile
+        # Use LLM to create detailed teaching plan
+        # NOTE: Use direct f-string (not _format_prompt) to avoid the wrapper
+        # appending its own output_format block which confuses the LLM into
+        # generating trailing commas or other invalid JSON.
+        prompt = f"""{self._build_system_prompt()}
+
+Create a concise teaching plan for "{topic_name or topic_code}" in Class 10 {subject_code.upper()}.
+
+Student profile:
 - Learning style: {profile.learning_style.value}
 - Preferred analogies: {profile.preferred_analogies}
-- Weak topics: {profile.weak_topics[:5]}
-- Historical mistakes: {profile.historical_mistakes[-5:]}
 
-## Available Analogy
-Category: {preferred_category}
-Analogy: {analogy_data.get('analogy', 'General explanation')}
-Scene: {analogy_data.get('scene', 'classroom')}
-Objects: {analogy_data.get('objects', [])}
+Available analogy: {analogy_data.get("analogy", "General explanation")}
+Analogy category: {preferred_category}
+Scene objects available: {analogy_data.get("objects", [])}
 
-## Instructions
-1. Decide if formula-first or intuition-first approach is better for this student
-2. Design visualization strategy
-3. Plan interactive elements for VR
-4. Identify key interaction points for understanding
-5. Create a memorable, engaging experience""",
-            output_format="""{
-  "approach": "intuition-first",
-  "approach_reason": "Student's visual+analogy style benefits from concrete examples first",
-  "visualization": "3D animated projectile with velocity vectors",
-  "interaction": "Let student adjust angle and see trajectory change in real-time",
-  "key_objects": ["ball", "angle_adjuster", "trajectory_line", "range_marker"],
+Return a single raw JSON object. No markdown fences, no trailing commas, no extra text.
+Use exactly this structure:
+{{
+  "approach": "intuition-first or formula-first",
+  "approach_reason": "one sentence why",
+  "visualization": "one sentence describing the 3D visualization",
+  "interaction": "one sentence describing student interaction",
+  "key_objects": ["object1", "object2", "object3"],
   "interaction_points": [
-    "Observe: Watch the ball's path",
-    "Adjust: Change the launch angle",
-    "Measure: See how range changes",
-    "Discover: Find the optimal angle"
+    "Point 1: description",
+    "Point 2: description",
+    "Point 3: description",
+    "Point 4: description"
   ],
   "teaching_sequence": [
-    "Show real-world cricket example",
-    "Let student experiment with angles",
-    "Reveal the pattern they discovered",
-    "Introduce the formula",
-    "Practice problems"
+    "Step 1",
+    "Step 2",
+    "Step 3",
+    "Step 4",
+    "Step 5"
   ],
   "emphasize_visual": true,
   "use_examples_first": true
-}"""
-        )
+}}"""
 
-        result = await self._invoke_llm_json(prompt)
-        
+        raw = await self._invoke_llm(prompt)
+        logger.debug("[get_teaching_plan] raw response: %d chars", len(raw))
+        result = self._parse_json(raw)
+
         return PedagogyPlan(
             topic=topic_code,
             analogy=analogy_data.get("analogy", f"Teaching {topic_name or topic_code}"),
@@ -355,69 +355,128 @@ Objects: {analogy_data.get('objects', [])}
     ) -> Dict[str, Any]:
         """
         Generate actual teaching content (explanations, examples, practice).
-        
-        This builds the lesson text a student reads/hears, using the
-        pedagogy plan's strategy (analogy, approach, visualization) to
-        shape the content.
+
+        Calls the LLM once per subtopic instead of asking for all sections
+        in one prompt. This keeps each response small (~1500 tokens) and
+        completely eliminates the truncation issue that caused JSON parse
+        failures when all 4+ subtopics were requested in a single call.
         """
-        subtopics_str = "\n".join(f"- {s}" for s in subtopics) if subtopics else "- (General overview)"
-        
-        prompt = self._format_prompt(
-            task=f"""Generate a complete, engaging lesson for "{topic_name}" in Class 10 {subject_code.upper()}.
+        import asyncio as _asyncio
 
-## Teaching Strategy (follow this)
-- Approach: {pedagogy_plan.get('approach', 'intuition-first')}
-- Core analogy: {pedagogy_plan.get('analogy', 'real-world examples')}
-- Visualization: {pedagogy_plan.get('visualization', 'interactive 3D')}
-- Student learning style: {learning_style or 'visual'}
+        analogy = pedagogy_plan.get("analogy", "real-world examples")
+        approach = pedagogy_plan.get("approach", "intuition-first")
+        visualization = pedagogy_plan.get("visualization", "interactive 3D")
+        style = learning_style or "visual"
 
-## Subtopics to Cover
-{subtopics_str}
+        if not subtopics:
+            subtopics = ["General Overview"]
 
-## Instructions
-1. Write an engaging introduction that hooks the student using the analogy above.
-2. For EACH subtopic write:
-   - A clear explanation (2-4 paragraphs, conversational tone, Class 10 level)
-   - At least one worked example with step-by-step solution
-   - A real-world connection or analogy
-3. End with key takeaways and 2-3 practice problems with answers.
-4. Use simple language. Avoid jargon unless defining it.
-5. Make it feel like a friendly tutor speaking to a 15-year-old.""",
-            output_format="""{
-  "title": "Number Systems — Your Gateway to Mathematics",
-  "introduction": "Imagine a world where alien teams visit Earth for a cricket match, but each team counts runs differently...",
-  "sections": [
-    {
-      "subtopic": "Real Numbers",
-      "explanation": "Let's start with a question: can every point on a number line be named?...",
-      "example": {
-        "problem": "Classify the following numbers: 3, -2, 0.75, √2, π",
-        "solution": "3 is a natural number and integer. -2 is an integer. 0.75 = 3/4 is rational. √2 ≈ 1.414... is irrational. π ≈ 3.14159... is irrational."
-      },
-      "real_world_connection": "When you measure the diagonal of a 1×1 tile, you get √2 — a number that goes on forever without repeating."
-    }
-  ],
+        # ── Step 1: Generate the lesson introduction (one small call) ─────────
+        intro_prompt = f"""{self._build_system_prompt()}
+
+Write a single engaging introduction paragraph for a Class 10 {subject_code.upper()} lesson on "{topic_name}".
+
+Teaching analogy to use: {analogy}
+Student learning style: {style}
+
+Rules:
+- 3-5 sentences maximum
+- Hook the student immediately using the analogy
+- Conversational tone, age 15
+- No markdown, no JSON — plain text only
+"""
+        intro_text = await self._invoke_llm(intro_prompt)
+        intro_text = intro_text.strip()
+        logger.debug("[generate_lesson_content] intro: %d chars", len(intro_text))
+
+        # ── Step 2: Generate each section independently ───────────────────────
+        sections: List[Dict[str, Any]] = []
+        for subtopic in subtopics:
+            section_prompt = f"""{self._build_system_prompt()}
+
+Generate a lesson section for ONE subtopic only.
+
+Topic: {topic_name} (Class 10 {subject_code.upper()})
+Subtopic: {subtopic}
+Teaching approach: {approach}
+Analogy to weave in: {analogy}
+Student learning style: {style}
+
+Return a single raw JSON object — no markdown fences, no extra text.
+Use exactly this structure:
+{{
+  "subtopic": "{subtopic}",
+  "explanation": "2-3 paragraph explanation, conversational, Class 10 level",
+  "example": {{
+    "problem": "one worked example problem",
+    "solution": "step-by-step solution"
+  }},
+  "real_world_connection": "1-2 sentences connecting to real life using the analogy"
+}}"""
+
+            raw = await self._invoke_llm(section_prompt)
+            logger.debug(
+                "[generate_lesson_content] section '%s': %d chars", subtopic, len(raw)
+            )
+            try:
+                section = self._parse_json(raw)
+                # Ensure subtopic key is always present
+                section.setdefault("subtopic", subtopic)
+                sections.append(section)
+            except Exception as e:
+                logger.warning(
+                    "[generate_lesson_content] section '%s' parse failed: %s — using fallback",
+                    subtopic,
+                    e,
+                )
+                sections.append(
+                    {
+                        "subtopic": subtopic,
+                        "explanation": raw[:500] if raw else "Content unavailable.",
+                        "example": {"problem": "", "solution": ""},
+                        "real_world_connection": "",
+                    }
+                )
+
+        # ── Step 3: Generate takeaways + practice problems (one small call) ───
+        subtopics_summary = ", ".join(subtopics)
+        summary_prompt = f"""{self._build_system_prompt()}
+
+A Class 10 {subject_code.upper()} lesson on "{topic_name}" covered: {subtopics_summary}.
+
+Return a single raw JSON object — no markdown fences, no extra text:
+{{
   "key_takeaways": [
-    "Every rational number can be written as p/q where q ≠ 0",
-    "Irrational numbers have non-terminating, non-repeating decimals"
+    "concise takeaway 1",
+    "concise takeaway 2",
+    "concise takeaway 3"
   ],
   "practice_problems": [
-    {
-      "question": "Is 0.333... rational or irrational? Explain.",
-      "answer": "Rational, because 0.333... = 1/3"
-    }
+    {{
+      "question": "practice question 1",
+      "answer": "answer 1"
+    }},
+    {{
+      "question": "practice question 2",
+      "answer": "answer 2"
+    }}
   ]
-}"""
-        )
-        
-        result = await self._invoke_llm_json(prompt)
-        
+}}"""
+
+        raw_summary = await self._invoke_llm(summary_prompt)
+        logger.debug("[generate_lesson_content] summary: %d chars", len(raw_summary))
+        try:
+            summary = self._parse_json(raw_summary)
+        except Exception as e:
+            logger.warning("[generate_lesson_content] summary parse failed: %s", e)
+            summary = {"key_takeaways": [], "practice_problems": []}
+
         return {
-            "title": result.get("title", f"Lesson: {topic_name}"),
-            "introduction": result.get("introduction", ""),
-            "sections": result.get("sections", []),
-            "key_takeaways": result.get("key_takeaways", []),
-            "practice_problems": result.get("practice_problems", []),
+            "title": f"{topic_name} — {subject_code.upper()} Lesson",
+            "introduction": intro_text,
+            "sections": sections,
+            "key_takeaways": summary.get("key_takeaways", []),
+            "practice_problems": summary.get("practice_problems", []),
         }
 
     async def select_analogy(
@@ -432,9 +491,9 @@ Objects: {analogy_data.get('objects', [])}
         profile = await supabase_manager.get_learner_profile(student_id)
         if not profile:
             return {"error": "Student profile not found"}
-        
+
         available = self._get_available_analogies(subject_code, topic_code)
-        
+
         if not available:
             return {
                 "topic_code": topic_code,
@@ -442,7 +501,7 @@ Objects: {analogy_data.get('objects', [])}
                 "selected_category": "general",
                 "analogy": f"Let's explore {topic_code} step by step",
             }
-        
+
         # Score each category based on student preferences
         scores = {}
         for category in available.keys():
@@ -451,15 +510,21 @@ Objects: {analogy_data.get('objects', [])}
                 score += 10
             if category == "daily_life":  # Universal fallback
                 score += 3
-            if profile.learning_style == LearningStyle.KINESTHETIC and category == "sports":
+            if (
+                profile.learning_style == LearningStyle.KINESTHETIC
+                and category == "sports"
+            ):
                 score += 5
-            if profile.learning_style == LearningStyle.VISUAL and category in ["gaming", "daily_life"]:
+            if profile.learning_style == LearningStyle.VISUAL and category in [
+                "gaming",
+                "daily_life",
+            ]:
                 score += 5
             scores[category] = score
-        
+
         best_category = max(scores, key=scores.get)
         selected = available[best_category]
-        
+
         return {
             "topic_code": topic_code,
             "selected_category": best_category,
@@ -469,7 +534,9 @@ Objects: {analogy_data.get('objects', [])}
             "alternatives": list(available.keys()),
         }
 
-    def _get_available_analogies(self, subject_code: str, topic_code: str) -> Dict[str, Any]:
+    def _get_available_analogies(
+        self, subject_code: str, topic_code: str
+    ) -> Dict[str, Any]:
         """Get all available analogies for a topic."""
         if subject_code not in self.analogy_bank:
             return {}
@@ -498,7 +565,7 @@ Objects: {analogy_data.get('objects', [])}
     ) -> Dict[str, Any]:
         """Get VR scene and object recommendations."""
         analogies = self._get_available_analogies(subject_code, topic_code)
-        
+
         if analogy_category in analogies:
             data = analogies[analogy_category]
             return {
@@ -506,7 +573,7 @@ Objects: {analogy_data.get('objects', [])}
                 "objects": data.get("objects", []),
                 "analogy": data.get("analogy"),
             }
-        
+
         return {
             "scene": "virtual_classroom",
             "objects": ["whiteboard", "teacher_avatar"],

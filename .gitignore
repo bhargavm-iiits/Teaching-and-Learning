@@ -1,3 +1,9 @@
 .venv
 __pycache__/
 .env
+VR_TEAM_SPEC.md
+scene_registry.json
+Flaws and Improvements.txt
+CLAUDE.md
+Analysis.txt
+VR Assests/ASSETS/

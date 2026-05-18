@@ -30,9 +30,9 @@ class AgentOrchestrator:
     2. Agent B (Profile) → Update learner profile
     3. Agent C (Curriculum) → Decide what to teach
     4. Agent D (Pedagogy) → Decide how to teach
-    5. Agent E (VR) → Generate VR instructions
+    5. Agent E (VR) → Author Lesson Manifest (components + state machine JSON)
     6. Agent F (Evaluation) → Provide feedback (during/after)
-    7. Agent G (SceneBuilder) → Build VR scene environments
+    7. Agent G (SceneBuilder) → Generate VR scene descriptions (legacy, optional)
     """
 
     def __init__(self):
@@ -857,12 +857,14 @@ class AgentOrchestrator:
         Stream teaching content generation with ACTUAL content chunks.
 
         Events emitted (in order):
-        - profile: learner profile data
-        - curriculum: curriculum plan
-        - pedagogy: pedagogy plan (analogy, visualization, strategies)
-        - section: one event per lesson section (subtopic content)
-        - scene: VR scene plan
-        - complete: summary metadata
+        - profile:       learner profile data
+        - curriculum:    curriculum plan
+        - pedagogy:      pedagogy plan (analogy, approach, strategies)
+        - section:       one event per lesson section (subtopic content)
+        - scene_preload: {environment_id, theme, teacher_greeting} — Unity loads scene now
+        - progress:      "Authoring lesson manifest..."
+        - manifest:      full LessonManifest JSON — Unity walks state machine
+        - complete:      summary metadata
         """
         # 1. Load learner profile
         profile_result = await self.profile_agent.process(
@@ -926,62 +928,21 @@ class AgentOrchestrator:
                 "total": len(sections),
             }
 
-        # 5a. Build VR scene (Agent G)
+        # 5. Agent E: author the lesson manifest (scene_preload → manifest)
         lesson_id = str(uuid.uuid4())
-        scene_plan = await self.scene_builder.process(
-            {
-                "action": "build_scene",
-                "session_id": lesson_id,
-                "subject_code": subject_code,
-                "topic_code": topic_code,
-                "topic_name": curriculum_plan["topic_name"],
-                "pedagogy_plan": pedagogy_result,
-                "learner_profile": profile_result,
-            }
-        )
-        # Inject asset_bindings from Agent G so Agent E can embed prefab paths
-        # in generated C# [SerializeField] references.
-        scene_plan["asset_bindings"] = self.scene_builder.get_asset_bindings(
-            subject_code, topic_code
-        )
-        yield {"event": "scene", "data": scene_plan}
+        student_name = profile_result.get("name") or profile_result.get("display_name", student_id)
 
-        # 5b. Generate C# scripts via Agent E's token-streaming ReAct loop.
-        #     Each script streams token-by-token as the LLM writes it.
-        yield {
-            "event": "progress",
-            "step": "Generating Unity C# scripts...",
-            "progress": 80,
-        }
-        script_package: Dict[str, Any] = {}
-        async for event in self.vr_agent.generate_lesson_instructions_stream(
-            curriculum_plan={
-                **curriculum_plan,
-                "session_id": lesson_id,
-                "student_id": student_id,
-            },
+        async for event in self.vr_agent.author_manifest_stream(
+            session_id=lesson_id,
+            student_id=student_id,
+            student_name=student_name,
+            curriculum_plan={**curriculum_plan, "session_id": lesson_id, "student_id": student_id},
             pedagogy_plan=pedagogy_result,
-            scene_plan=scene_plan,
+            learner_profile=profile_result,
         ):
-            if event.get("event") == "__package__":
-                # Internal sentinel — capture the assembled package; do NOT forward
-                script_package = event["data"]
-            else:
-                # Forward every other event (csharp_thinking, csharp_script_start,
-                # csharp_script_token, csharp_script_complete, csharp_patch_*,
-                # csharp_review, progress) directly to the SSE stream
-                yield event
+            yield event
 
-        yield {
-            "event": "scripts_complete",
-            "data": {
-                "session_id": lesson_id,
-                "total_scripts": script_package.get("total_scripts", 0),
-                "entry_point": script_package.get("entry_point"),
-            },
-        }
-
-        # 6. Final completion event with summary metadata
+        # 6. Final completion event
         yield {
             "event": "complete",
             "data": {
@@ -992,9 +953,6 @@ class AgentOrchestrator:
                 "topic_name": curriculum_plan["topic_name"],
                 "learning_style": profile_result.get("learning_style"),
                 "total_sections": len(sections),
-                "total_scripts": script_package.get("total_scripts", 0),
-                "entry_point": script_package.get("entry_point"),
-                "scene_type": scene_plan.get("opening_scene", {}).get("scene_id"),
             },
         }
 

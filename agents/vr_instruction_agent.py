@@ -1,38 +1,49 @@
 """
-Agent E: VR Instruction Agent (agentAR-style autonomous C# script generator)
+Agent E: Manifest Author Agent
 
 Purpose:
-    Convert pedagogy and curriculum plans into actual Unity C# MonoBehaviour
-    scripts using an autonomous ReAct (Reason + Act) loop inspired by the
-    agentAR paper ("Creating Augmented Reality Applications with Tool-Augmented
-    LLM-based Autonomous Agents").
+    Given curriculum plan, pedagogy plan, and learner profile, author a
+    LessonManifest JSON that Unity's state machine runtime renders directly.
+    No C# generated at runtime. No ReAct loop. One structured LLM call.
 
 Inputs:
     - CurriculumPlan from Agent C
     - PedagogyPlan from Agent D
-    - FullScenePlan (with asset_bindings) from Agent G
+    - LearnerProfile from Agent B (student name, learning_style, misconceptions)
 
 Outputs:
-    - UnityScriptPackage: a bundle of C# scripts Unity compiles and runs
-    - Assessment instructions (VRInstruction JSON, unchanged) for MCQ panels
-
-ReAct loop per lesson:
-    THINK → ACT (generate_csharp_script)
-          → OBSERVE (validate_csharp_syntax)
-          → OBSERVE (review_script_pedagogically)
-          → [patch if needed]
-          → repeat until done
+    - LessonManifest: full JSON Unity consumes via WebSocket
+    - ManifestPatch[]: real-time delta updates driven by student telemetry
 """
 
 from __future__ import annotations
 
-import uuid
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+import json
+import logging
+import os
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from agents.base_agent import BaseAgent
-from agents.vr_tools import VRToolRegistry
+from models.manifest import (
+    VALID_ANCHORS,
+    ComponentInstance,
+    ComponentType,
+    EnvironmentId,
+    LessonManifest,
+    LessonSpec,
+    ManifestPatch,
+    NarrationSpec,
+    PatchOp,
+    SceneSpec,
+    StateMachine,
+    StateMachineNode,
+    StudentSpec,
+    TelemetryConfig,
+    TimeOfDay,
+)
+# Assessment instructions (VRInstruction JSON) for in-lesson MCQ panels —
+# generation logic preserved from original Agent E.
 from models.vr_contracts import (
-    # Assessment-only contracts (unchanged)
     AssessmentCommand,
     AssessmentType,
     AvatarAction,
@@ -41,632 +52,494 @@ from models.vr_contracts import (
     VoiceCommand,
     VoiceEmotion,
     VRInstruction,
-    # New C# script contracts (used by type hints / return annotation)
-    UnityScriptPackage,
 )
 
+logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Expected lesson flow: step_type sequence the _think() LLM should follow
-# ---------------------------------------------------------------------------
-_LESSON_FLOW = [
-    ("session_manager", "Orchestrates all lesson steps in sequence"),
-    ("intro", "Welcome student and orient them in the scene"),
-    ("demonstration", "Visually demonstrate the core concept"),
-    ("interaction", "Student manipulates a parameter and observes the result"),
-    ("assessment", "Quick in-lesson knowledge check (MCQ panel)"),
-    ("summary", "Recap key visuals and fire LessonComplete event"),
-]
+_REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "..", "scene_registry.json")
+
+
+def _load_registry() -> Dict[str, Any]:
+    try:
+        with open(_REGISTRY_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+_REGISTRY = _load_registry()
+
+_COMPONENT_TYPES = list(ComponentType)
+_ENVIRONMENT_IDS = [e.value for e in EnvironmentId]
 
 
 class VRInstructionAgent(BaseAgent):
     """
-    Agent E: VR Instruction Agent — agentAR-style autonomous C# generator.
+    Agent E: Lesson Manifest Author.
 
-    Operates a ReAct loop:
-      1. THINK  — LLM decides which C# script to generate next
-      2. ACT    — tools.generate_csharp_script()
-      3. OBSERVE — tools.validate_csharp_syntax()  [regex, no LLM]
-                 — tools.patch_csharp_script() if errors (up to max_patch_retries)
-      4. OBSERVE — tools.review_script_pedagogically() [LLM]
-                 — tools.patch_csharp_script() if score < 7
-      5. Repeat until done or max_iterations reached
-      6. tools.assemble_unity_package() → UnityScriptPackage
+    Replaces the old agentAR C# ReAct loop.  One LLM call produces a complete
+    LessonManifest; a second lightweight call produces ManifestPatch[] when
+    Unity reports student telemetry.
 
-    Assessment panels (MCQ/descriptive) still use the original VRInstruction
-    JSON format via generate_assessment_instructions() — that method is unchanged.
+    Public API:
+        author_manifest_stream()   — streams scene_preload → manifest events
+        patch_from_telemetry()     — returns patches for mid-lesson adaptation
+        generate_assessment_instructions()  — unchanged, still used by MCQ panels
     """
 
-    def __init__(self, temperature: float = 0.3):
+    def __init__(self, temperature: float = 0.4):
         super().__init__(temperature=temperature)
-        self.tools = VRToolRegistry(self.llm)
-        # In-memory store: session_id → {"scripts": [...], "plans": {...}}
-        # Used by apply_unity_feedback() when Unity reports compile errors.
-        self._sessions: Dict[str, Dict[str, Any]] = {}
-        self.max_iterations: int = 20
-        self.max_patch_retries: int = 3
-        self.min_pedagogy_score: int = 7
-
-    def _build_system_prompt(self) -> str:
-        return (
-            "You are Agent E — the VR Instruction Agent for an AI-driven educational "
-            "VR system targeting Class 10 students (age ~15). Your job is to plan and "
-            "generate Unity C# MonoBehaviour scripts that implement an interactive "
-            "lesson inside a VR scene. You think step-by-step about what each script "
-            "needs to do, then direct the tool registry to generate it."
-        )
+        # session_id → LessonManifest (for telemetry patching)
+        self._sessions: Dict[str, LessonManifest] = {}
 
     # =========================================================================
-    # process() dispatcher
+    # process() dispatcher — preserved signature for orchestrator compat
     # =========================================================================
 
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Dispatcher for Agent E actions.
-
-        Actions:
-          'create_session'    → create_session()
-          'generate_lesson'   → generate_lesson_instructions()   [ReAct loop]
-          'generate_assessment' → generate_assessment_instructions()  [unchanged]
-        """
         action = input_data.get("action")
-
-        if action == "create_session":
-            return await self.create_session(
+        if action == "author_manifest":
+            manifest = await self.author_manifest(
+                session_id=input_data["session_id"],
                 student_id=input_data["student_id"],
+                student_name=input_data.get("student_name", "Student"),
                 curriculum_plan=input_data["curriculum_plan"],
                 pedagogy_plan=input_data["pedagogy_plan"],
-                scene_plan=input_data.get("scene_plan", {}),
+                learner_profile=input_data.get("learner_profile", {}),
             )
-        elif action == "generate_lesson":
-            return await self.generate_lesson_instructions(
-                curriculum_plan=input_data["curriculum_plan"],
-                pedagogy_plan=input_data["pedagogy_plan"],
-                scene_plan=input_data.get("scene_plan", {}),
-            )
+            return manifest.model_dump()
         elif action == "generate_assessment":
             return self.generate_assessment_instructions(
                 questions=input_data["questions"],
                 assessment_type=input_data.get("assessment_type", "concept_check"),
             )
-        else:
-            raise ValueError(f"Unknown action: {action}")
+        raise ValueError(f"Unknown action: {action}")
 
     # =========================================================================
-    # create_session  (thin wrapper, kept for backward compatibility)
+    # author_manifest — the core method
     # =========================================================================
 
-    async def create_session(
-        self,
-        student_id: str,
-        curriculum_plan: Dict[str, Any],
-        pedagogy_plan: Dict[str, Any],
-        scene_plan: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Create a new VR teaching session and return a UnityScriptPackage.
-        """
-        session_id = str(uuid.uuid4())
-        curriculum_plan = {**curriculum_plan, "session_id": session_id}
-        package = await self.generate_lesson_instructions(
-            curriculum_plan=curriculum_plan,
-            pedagogy_plan=pedagogy_plan,
-            scene_plan=scene_plan or {},
-        )
-        # Inject student_id (generate_lesson_instructions may not have it)
-        package["student_id"] = student_id
-        return package
-
-    # =========================================================================
-    # generate_lesson_instructions — the agentAR ReAct loop
-    # =========================================================================
-
-    async def generate_lesson_instructions(
-        self,
-        curriculum_plan: Dict[str, Any],
-        pedagogy_plan: Dict[str, Any],
-        scene_plan: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        Autonomous ReAct loop that generates one C# script per lesson step.
-
-        Returns a UnityScriptPackage dict ready for SSE streaming to Unity.
-        """
-        session_id = curriculum_plan.get("session_id", str(uuid.uuid4()))
-        topic = curriculum_plan.get("topic_name") or curriculum_plan.get(
-            "topic_code", "unknown"
-        )
-        subject = curriculum_plan.get("subject_code", "unknown")
-        topic_code = curriculum_plan.get("topic_code", "unknown")
-        estimated_minutes = curriculum_plan.get("estimated_duration_minutes", 30)
-        asset_bindings: Dict[str, str] = scene_plan.get("asset_bindings", {})
-
-        generated_scripts: List[Dict[str, Any]] = []
-        iteration = 0
-
-        while iteration < self.max_iterations:
-            # ── THINK ────────────────────────────────────────────────────────
-            action = await self._think(
-                generated_so_far=generated_scripts,
-                curriculum_plan=curriculum_plan,
-                pedagogy_plan=pedagogy_plan,
-                scene_plan=scene_plan,
-            )
-
-            if action.get("done"):
-                break
-
-            class_name = action["class_name"]
-            step_type = action["step_type"]
-            description = action["description"]
-            learning_objective = action["learning_objective"]
-            attach_to = action.get("attach_to", "TeachingManager")
-            is_manager = step_type == "session_manager"
-
-            # ── ACT: generate script ─────────────────────────────────────────
-            code = await self.tools.generate_csharp_script(
-                class_name=class_name,
-                description=description,
-                step_type=step_type,
-                learning_objective=learning_objective,
-                attach_to=attach_to,
-                scene_context=scene_plan,
-                pedagogy_context=pedagogy_plan,
-                topic=topic,
-                asset_bindings=asset_bindings,
-                is_session_manager=is_manager,
-            )
-
-            # ── OBSERVE: syntax validation (regex) ───────────────────────────
-            validation = self.tools.validate_csharp_syntax(code)
-            if not validation["valid"]:
-                for _attempt in range(self.max_patch_retries):
-                    code = await self.tools.patch_csharp_script(
-                        code=code,
-                        errors=validation["errors"],
-                        instruction="Fix all syntax and structural errors listed above.",
-                    )
-                    validation = self.tools.validate_csharp_syntax(code)
-                    if validation["valid"]:
-                        break
-
-            # ── OBSERVE: pedagogical review (LLM) — skip for manager ─────────
-            pedagogy_score = 10  # default for session_manager
-            if not is_manager:
-                review = await self.tools.review_script_pedagogically(
-                    code=code,
-                    learning_objective=learning_objective,
-                    topic_code=topic_code,
-                )
-                pedagogy_score = review.get("score", 5)
-                if pedagogy_score < self.min_pedagogy_score and review.get("issues"):
-                    suggestions = review.get("suggestions", [])
-                    patch_instruction = (
-                        f"Improve pedagogical quality to better teach: {learning_objective}. "
-                        f"Suggestions: {'; '.join(suggestions)}"
-                    )
-                    code = await self.tools.patch_csharp_script(
-                        code=code,
-                        errors=review["issues"],
-                        instruction=patch_instruction,
-                    )
-                    # Re-validate after pedagogical patch
-                    validation = self.tools.validate_csharp_syntax(code)
-
-            generated_scripts.append(
-                {
-                    "filename": f"{class_name}.cs",
-                    "class_name": class_name,
-                    "code": code,
-                    "attach_to": attach_to,
-                    "step_type": step_type,
-                    "learning_objective": learning_objective,
-                    "dependencies": action.get("dependencies", []),
-                    "validation_passed": validation["valid"],
-                    "pedagogy_score": pedagogy_score,
-                }
-            )
-
-            iteration += 1
-
-        # ── Assemble final package ────────────────────────────────────────────
-        package = self.tools.assemble_unity_package(
-            scripts=generated_scripts,
-            scene_manifest=scene_plan,
-            session_id=session_id,
-            student_id=curriculum_plan.get("student_id", ""),
-            topic=topic,
-            subject=subject,
-            estimated_minutes=estimated_minutes,
-        )
-
-        # Store in memory for apply_unity_feedback()
-        self._sessions[session_id] = {
-            "scripts": {s["filename"]: s for s in generated_scripts},
-            "curriculum_plan": curriculum_plan,
-            "pedagogy_plan": pedagogy_plan,
-            "scene_plan": scene_plan,
-        }
-
-        return package
-
-    # =========================================================================
-    # generate_lesson_instructions_stream — token-by-token streaming ReAct loop
-    # =========================================================================
-
-    async def generate_lesson_instructions_stream(
-        self,
-        curriculum_plan: Dict[str, Any],
-        pedagogy_plan: Dict[str, Any],
-        scene_plan: Dict[str, Any],
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Streaming version of the ReAct loop.
-
-        Yields SSE-ready event dicts as each script is generated token by token,
-        instead of blocking until all scripts are complete.
-
-        Event sequence per script:
-            csharp_thinking        — THINK decision (atomic, JSON)
-            csharp_script_start    — generation about to start
-            csharp_script_token    — one token from the LLM
-            [csharp_patch_start    — only if syntax validation fails]
-            [csharp_patch_token    — patch tokens]
-            [csharp_patch_complete — patch result]
-            progress               — "Reviewing <ClassName>..." (before review)
-            csharp_review          — pedagogical score (atomic)
-            [csharp_patch_start/token/complete — only if score < min_pedagogy_score]
-            csharp_script_complete — full script data including code
-
-        Final internal event (consumed by orchestrator, not forwarded to client):
-            __package__            — the assembled UnityScriptPackage dict
-        """
-        session_id = curriculum_plan.get("session_id", str(uuid.uuid4()))
-        topic = curriculum_plan.get("topic_name") or curriculum_plan.get(
-            "topic_code", "unknown"
-        )
-        subject = curriculum_plan.get("subject_code", "unknown")
-        topic_code = curriculum_plan.get("topic_code", "unknown")
-        estimated_minutes = curriculum_plan.get("estimated_duration_minutes", 30)
-        asset_bindings: Dict[str, str] = scene_plan.get("asset_bindings", {})
-        generated_scripts: List[Dict[str, Any]] = []
-        iteration = 0
-
-        while iteration < self.max_iterations:
-            # ── THINK (atomic LLM call — short JSON decision, not streamed) ──
-            action = await self._think(
-                generated_so_far=generated_scripts,
-                curriculum_plan=curriculum_plan,
-                pedagogy_plan=pedagogy_plan,
-                scene_plan=scene_plan,
-            )
-            if action.get("done"):
-                break
-
-            class_name = action["class_name"]
-            step_type = action["step_type"]
-            description = action["description"]
-            learning_objective = action["learning_objective"]
-            attach_to = action.get("attach_to", "TeachingManager")
-            is_manager = step_type == "session_manager"
-            script_id = f"script_{iteration}"
-
-            # Announce THINK decision so client knows what is being generated next
-            yield {
-                "event": "csharp_thinking",
-                "data": {
-                    "script_index": iteration,
-                    "class_name": class_name,
-                    "step_type": step_type,
-                    "learning_objective": learning_objective,
-                    "attach_to": attach_to,
-                },
-            }
-
-            # ── ACT: stream script generation tokens ─────────────────────────
-            yield {
-                "event": "csharp_script_start",
-                "id": script_id,
-                "meta": {
-                    "class_name": class_name,
-                    "filename": f"{class_name}.cs",
-                    "step_type": step_type,
-                    "index": iteration,
-                },
-            }
-
-            full_code = ""
-            async for item in self.tools.generate_csharp_script_stream(
-                class_name=class_name,
-                description=description,
-                step_type=step_type,
-                learning_objective=learning_objective,
-                attach_to=attach_to,
-                scene_context=scene_plan,
-                pedagogy_context=pedagogy_plan,
-                topic=topic,
-                asset_bindings=asset_bindings,
-                is_session_manager=is_manager,
-            ):
-                if isinstance(item, dict) and item.get("__done__"):
-                    full_code = item["code"]
-                else:
-                    token_str = str(item)
-                    full_code += token_str
-                    yield {
-                        "event": "csharp_script_token",
-                        "id": script_id,
-                        "token": token_str,
-                    }
-
-            # ── OBSERVE: syntax validation (regex, instant) ──────────────────
-            validation = self.tools.validate_csharp_syntax(full_code)
-
-            for attempt in range(self.max_patch_retries):
-                if validation["valid"]:
-                    break
-                patch_id = f"patch_{script_id}_a{attempt}"
-                yield {
-                    "event": "csharp_patch_start",
-                    "id": patch_id,
-                    "meta": {
-                        "errors": validation["errors"],
-                        "warnings": validation["warnings"],
-                        "attempt": attempt + 1,
-                    },
-                }
-                patched_code = ""
-                async for item in self.tools.patch_csharp_script_stream(
-                    code=full_code,
-                    errors=validation["errors"],
-                    instruction="Fix all syntax and structural errors listed above.",
-                ):
-                    if isinstance(item, dict) and item.get("__done__"):
-                        patched_code = item["code"]
-                    else:
-                        token_str = str(item)
-                        patched_code += token_str
-                        yield {
-                            "event": "csharp_patch_token",
-                            "id": patch_id,
-                            "token": token_str,
-                        }
-                full_code = patched_code
-                validation = self.tools.validate_csharp_syntax(full_code)
-                yield {
-                    "event": "csharp_patch_complete",
-                    "id": patch_id,
-                    "data": {
-                        "valid": validation["valid"],
-                        "errors_remaining": validation["errors"],
-                    },
-                }
-
-            # ── OBSERVE: pedagogical review (atomic LLM call — returns JSON) ─
-            pedagogy_score = 10  # default for session_manager
-            if not is_manager:
-                yield {
-                    "event": "progress",
-                    "step": f"Reviewing {class_name} for pedagogical quality...",
-                    "progress": -1,  # -1 = indeterminate
-                }
-                review = await self.tools.review_script_pedagogically(
-                    code=full_code,
-                    learning_objective=learning_objective,
-                    topic_code=topic_code,
-                )
-                pedagogy_score = review.get("score", 5)
-                yield {
-                    "event": "csharp_review",
-                    "id": script_id,
-                    "data": {
-                        "score": pedagogy_score,
-                        "issues": review.get("issues", []),
-                        "suggestions": review.get("suggestions", []),
-                    },
-                }
-                # If score too low, stream a pedagogical patch
-                if pedagogy_score < self.min_pedagogy_score and review.get("issues"):
-                    suggestions = review.get("suggestions", [])
-                    patch_id = f"patch_{script_id}_pedagogy"
-                    patch_instr = (
-                        f"Improve pedagogical quality to better teach: {learning_objective}. "
-                        f"Suggestions: {'; '.join(suggestions)}"
-                    )
-                    yield {
-                        "event": "csharp_patch_start",
-                        "id": patch_id,
-                        "meta": {"errors": review["issues"], "type": "pedagogy"},
-                    }
-                    patched_code = ""
-                    async for item in self.tools.patch_csharp_script_stream(
-                        code=full_code,
-                        errors=review["issues"],
-                        instruction=patch_instr,
-                    ):
-                        if isinstance(item, dict) and item.get("__done__"):
-                            patched_code = item["code"]
-                        else:
-                            token_str = str(item)
-                            patched_code += token_str
-                            yield {
-                                "event": "csharp_patch_token",
-                                "id": patch_id,
-                                "token": token_str,
-                            }
-                    full_code = patched_code
-                    validation = self.tools.validate_csharp_syntax(full_code)
-                    yield {
-                        "event": "csharp_patch_complete",
-                        "id": patch_id,
-                        "data": {"valid": validation["valid"], "type": "pedagogy"},
-                    }
-
-            # ── Script complete — emit full data ─────────────────────────────
-            script_entry = {
-                "filename": f"{class_name}.cs",
-                "class_name": class_name,
-                "code": full_code,
-                "attach_to": attach_to,
-                "step_type": step_type,
-                "learning_objective": learning_objective,
-                "dependencies": action.get("dependencies", []),
-                "validation_passed": validation["valid"],
-                "pedagogy_score": pedagogy_score,
-            }
-            generated_scripts.append(script_entry)
-            yield {
-                "event": "csharp_script_complete",
-                "id": script_id,
-                "data": script_entry,  # includes full .code
-            }
-
-            iteration += 1
-
-        # ── Assemble package and store for apply_unity_feedback() ────────────
-        package = self.tools.assemble_unity_package(
-            scripts=generated_scripts,
-            scene_manifest=scene_plan,
-            session_id=session_id,
-            student_id=curriculum_plan.get("student_id", ""),
-            topic=topic,
-            subject=subject,
-            estimated_minutes=estimated_minutes,
-        )
-        self._sessions[session_id] = {
-            "scripts": {s["filename"]: s for s in generated_scripts},
-            "curriculum_plan": curriculum_plan,
-            "pedagogy_plan": pedagogy_plan,
-            "scene_plan": scene_plan,
-        }
-        # Internal sentinel consumed by the orchestrator — not forwarded to client
-        yield {"event": "__package__", "data": package}
-
-    # =========================================================================
-    # _think — reasoning step: decide next script to generate
-    # =========================================================================
-
-    async def _think(
-        self,
-        generated_so_far: List[Dict[str, Any]],
-        curriculum_plan: Dict[str, Any],
-        pedagogy_plan: Dict[str, Any],
-        scene_plan: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        THINK step: ask the LLM which C# script to generate next.
-
-        Returns a dict describing the next action, or {"done": True} when
-        all required scripts have been generated.
-        """
-        topic = curriculum_plan.get("topic_name") or curriculum_plan.get(
-            "topic_code", "unknown"
-        )
-        subject = curriculum_plan.get("subject_code", "").upper()
-        subtopics = curriculum_plan.get("subtopics", [])
-        analogy = pedagogy_plan.get("analogy", "real-world examples")
-        approach = pedagogy_plan.get("approach", "intuition-first")
-        asset_ids = list(scene_plan.get("asset_bindings", {}).keys())[:10]
-
-        done_steps = [
-            {"class_name": s["class_name"], "step_type": s["step_type"]}
-            for s in generated_so_far
-        ]
-        done_types = {s["step_type"] for s in generated_so_far}
-
-        # Build the expected flow list with done markers
-        flow_status = []
-        for stype, sdesc in _LESSON_FLOW:
-            status = "DONE" if stype in done_types else "PENDING"
-            flow_status.append(f"  [{status}] {stype}: {sdesc}")
-        flow_str = "\n".join(flow_status)
-
-        prompt = f"""{self._build_system_prompt()}
-
-## Lesson Planning — THINK step
-
-You are planning a VR lesson for Class 10 {subject} on the topic: "{topic}".
-
-Teaching analogy : {analogy}
-Teaching approach: {approach}
-Subtopics        : {subtopics}
-Available assets : {asset_ids}
-
-## Required lesson flow (6 scripts total):
-{flow_str}
-
-## Scripts generated so far ({len(generated_so_far)}/6):
-{done_steps if done_steps else "None yet"}
-
-## Your task:
-Decide which script to generate NEXT based on the flow above.
-If all 6 step types are marked DONE, return {{"done": true}}.
-Otherwise, return a JSON object describing the next script:
-
-{{
-  "done": false,
-  "class_name": "ExactClassName",
-  "step_type": "one of: session_manager|intro|demonstration|interaction|assessment|summary",
-  "description": "2-3 sentence description of what this script does",
-  "learning_objective": "What the student learns from this script",
-  "attach_to": "GameObjectName",
-  "dependencies": ["OtherClassName"]
-}}
-
-Rules for class_name:
-- Use PascalCase
-- SessionManager script: "{topic.replace(" ", "")}SessionManager"
-- Other scripts: descriptive name ending in Controller, Demo, Step, or Handler
-- No spaces, no special characters
-
-Return ONLY the JSON object, no additional text."""
-
-        result = await self._invoke_llm_json(prompt)
-        return result
-
-    # =========================================================================
-    # apply_unity_feedback — called by /vr/script-feedback endpoint
-    # =========================================================================
-
-    async def apply_unity_feedback(
+    async def author_manifest(
         self,
         session_id: str,
-        script_filename: str,
-        errors: List[str],
-    ) -> Dict[str, Any]:
+        student_id: str,
+        student_name: str,
+        curriculum_plan: Dict[str, Any],
+        pedagogy_plan: Dict[str, Any],
+        learner_profile: Dict[str, Any],
+    ) -> LessonManifest:
         """
-        Unity reported compilation errors for a generated script.
-        Patch the script and return the corrected version.
+        Single LLM call → full LessonManifest.
 
-        Args:
-            session_id:      The session that generated this script.
-            script_filename: e.g. "ProjectileMotionController.cs"
-            errors:          List of compiler error strings from Unity.
-
-        Returns:
-            {"filename": str, "code": str}  — the patched script.
-
-        Raises:
-            KeyError: if session_id or script_filename not found.
+        Validates anchors and component types before returning.  Falls back
+        to a minimal safe manifest on parse failure.
         """
-        session = self._sessions[session_id]  # raises KeyError if absent
-        script_entry = session["scripts"][script_filename]  # raises KeyError if absent
-
-        patched_code = await self.tools.patch_csharp_script(
-            code=script_entry["code"],
-            errors=errors,
-            instruction="Fix Unity compilation errors reported by the Unity Editor compiler.",
+        prompt = self._build_manifest_prompt(
+            session_id=session_id,
+            student_id=student_id,
+            student_name=student_name,
+            curriculum_plan=curriculum_plan,
+            pedagogy_plan=pedagogy_plan,
+            learner_profile=learner_profile,
         )
 
-        # Re-validate and store updated code
-        validation = self.tools.validate_csharp_syntax(patched_code)
-        script_entry["code"] = patched_code
-        script_entry["validation_passed"] = validation["valid"]
-
-        return {"filename": script_filename, "code": patched_code}
+        raw = await self._invoke_llm_json(prompt)
+        manifest = self._coerce_manifest(
+            raw=raw,
+            session_id=session_id,
+            student_id=student_id,
+            student_name=student_name,
+            curriculum_plan=curriculum_plan,
+            learner_profile=learner_profile,
+        )
+        self._sessions[session_id] = manifest
+        return manifest
 
     # =========================================================================
-    # generate_assessment_instructions — UNCHANGED from original
+    # author_manifest_stream — streaming wrapper for orchestrator
+    # =========================================================================
+
+    async def author_manifest_stream(
+        self,
+        session_id: str,
+        student_id: str,
+        student_name: str,
+        curriculum_plan: Dict[str, Any],
+        pedagogy_plan: Dict[str, Any],
+        learner_profile: Dict[str, Any],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Yields two events:
+          1. scene_preload  — within ~0ms (no LLM, just registry lookup)
+                             Unity loads the scene + shows teacher greeting
+          2. manifest       — after the LLM call completes (~3-6s)
+                             Unity starts walking the state machine
+        """
+        topic_code = curriculum_plan.get("topic_code", "")
+        subject_prefix = topic_code.split("_")[0] if "_" in topic_code else "PHY"
+        env_hint = _REGISTRY.get("topic_environment_hints", {}).get(subject_prefix, {})
+        overrides = env_hint.get("overrides", {}).get(topic_code, {})
+        preload_env = overrides.get("environment") or env_hint.get(
+            "default_environment", "env_indoor"
+        )
+        preload_theme = overrides.get("theme") or env_hint.get("default_theme", "lab")
+
+        yield {
+            "event": "scene_preload",
+            "session_id": session_id,
+            "environment_id": preload_env,
+            "theme": preload_theme,
+            "teacher_greeting": f"Hi {student_name}, getting your lesson ready...",
+        }
+
+        yield {"event": "progress", "step": "Authoring lesson manifest...", "progress": 60}
+
+        manifest = await self.author_manifest(
+            session_id=session_id,
+            student_id=student_id,
+            student_name=student_name,
+            curriculum_plan=curriculum_plan,
+            pedagogy_plan=pedagogy_plan,
+            learner_profile=learner_profile,
+        )
+
+        yield {
+            "event": "manifest",
+            "session_id": session_id,
+            "manifest": manifest.model_dump(),
+        }
+
+    # =========================================================================
+    # patch_from_telemetry — mid-lesson adaptation
+    # =========================================================================
+
+    async def patch_from_telemetry(
+        self,
+        session_id: str,
+        telemetry_events: List[Dict[str, Any]],
+    ) -> List[ManifestPatch]:
+        """
+        Receives batched telemetry events from Unity, returns manifest patches.
+
+        Lightweight Haiku call (<2s).  Returns [] if no adaptation is needed.
+        """
+        manifest = self._sessions.get(session_id)
+        if not manifest:
+            return []
+
+        summary = self._summarise_telemetry(telemetry_events)
+        if not summary.get("needs_adaptation"):
+            return []
+
+        prompt = self._build_patch_prompt(manifest=manifest, telemetry_summary=summary)
+        raw = await self._invoke_llm_json(prompt)
+
+        patches = []
+        for p in raw.get("patches", []):
+            try:
+                patches.append(ManifestPatch(**p))
+            except Exception:
+                continue
+        return patches
+
+    # =========================================================================
+    # Internal: prompt builders
+    # =========================================================================
+
+    def _build_manifest_prompt(
+        self,
+        session_id: str,
+        student_id: str,
+        student_name: str,
+        curriculum_plan: Dict[str, Any],
+        pedagogy_plan: Dict[str, Any],
+        learner_profile: Dict[str, Any],
+    ) -> str:
+        topic_name = curriculum_plan.get("topic_name", curriculum_plan.get("topic_code", ""))
+        topic_code = curriculum_plan.get("topic_code", "")
+        subject_code = curriculum_plan.get("subject_code", "")
+        subtopics = curriculum_plan.get("subtopics", [])
+        duration_min = curriculum_plan.get("estimated_duration_minutes", 8)
+
+        learning_style = learner_profile.get("learning_style", "visual")
+        misconceptions = learner_profile.get("misconceptions", [])
+        analogy = pedagogy_plan.get("analogy", "")
+        approach = pedagogy_plan.get("approach", "intuition-first")
+
+        valid_component_types = [c.value for c in ComponentType]
+        hint = _REGISTRY.get("topic_environment_hints", {}).get(
+            subject_code.upper(), {}
+        )
+        env_hint_str = json.dumps(hint, indent=2)
+
+        return f"""You are Agent E — the Lesson Manifest Author for a VR STEM education system.
+
+Your job is to produce a complete LessonManifest JSON for a Class 10 student. Unity will render this directly — you are the content author, Unity is the renderer.
+
+## Student
+- ID: {student_id}
+- Name: {student_name}
+- Learning style: {learning_style}
+- Known misconceptions: {misconceptions if misconceptions else "none"}
+
+## Lesson
+- Topic: {topic_name} (code: {topic_code})
+- Subject: {subject_code}
+- Subtopics: {subtopics}
+- Duration: {duration_min} minutes (~{duration_min * 60} seconds)
+- Teaching analogy: {analogy}
+- Approach: {approach}
+
+## Environment hints from registry
+{env_hint_str}
+
+## Valid component types (use ONLY these exact strings)
+{valid_component_types}
+
+## Valid anchor names (use ONLY these exact strings)
+{VALID_ANCHORS}
+
+## Rules
+1. Every component_id you invent must be unique within this manifest.
+2. Every anchor you use must be from the valid list above.
+3. Every component_type must be from the valid list above.
+4. State machine must start at start_node_id and every node must have at least one transition.
+5. The final node must have a transition to "END".
+6. At least one quiz_popup node must be present.
+7. teacher_avatar must be in the components list with component_id "teacher_main" at anchor "AnchorTeacher".
+8. Narration text must be warm, simple, and student-friendly (age ~15).
+9. If the student has misconceptions, add a remediation node that corrects them.
+10. telemetry_config.gaze_targets must list the component_ids of the main visualizer components.
+
+## Mandatory lesson structure (state machine nodes in order)
+intro → demo (spawns main visualizer) → interaction (spawns slider/toggle) → quiz → summary → END
+
+You may add remediation nodes between quiz and summary if misconceptions are known.
+
+## Output format
+Return ONLY the JSON manifest — no extra text, no markdown fences.
+
+Schema:
+{{
+  "manifest_version": "1.0",
+  "session_id": "{session_id}",
+  "student": {{
+    "id": "{student_id}",
+    "display_name": "{student_name}",
+    "learning_style": "{learning_style}"
+  }},
+  "lesson": {{
+    "topic_code": "{topic_code}",
+    "topic_title": "{topic_name}",
+    "estimated_duration_seconds": {duration_min * 60}
+  }},
+  "scene": {{
+    "environment_id": "<one of: env_indoor | env_outdoor | env_abstract>",
+    "theme": "<valid theme for chosen environment>",
+    "time_of_day": "day"
+  }},
+  "components": [
+    {{
+      "component_id": "teacher_main",
+      "component_type": "teacher_avatar",
+      "anchor": "AnchorTeacher",
+      "config": {{"character": "teacher", "gesture": "idle"}}
+    }},
+    ... more components
+  ],
+  "state_machine": {{
+    "start_node_id": "intro",
+    "nodes": [
+      {{
+        "node_id": "intro",
+        "type": "narration",
+        "narration": {{
+          "speaker_id": "teacher_main",
+          "text": "...",
+          "emotion": "friendly",
+          "gesture": "wave"
+        }},
+        "duration_seconds": 6,
+        "transitions": [{{"to": "demo", "condition": "always"}}]
+      }},
+      ... more nodes
+    ]
+  }},
+  "telemetry_config": {{
+    "gaze_targets": ["<component_ids of main visualizers>"],
+    "gaze_sample_rate_hz": 1.0,
+    "batch_interval_seconds": 2.0
+  }}
+}}"""
+
+    def _build_patch_prompt(
+        self,
+        manifest: LessonManifest,
+        telemetry_summary: Dict[str, Any],
+    ) -> str:
+        current_nodes = [
+            {"node_id": n.node_id, "type": n.type}
+            for n in manifest.state_machine.nodes
+        ]
+        return f"""You are Agent E adapting a live VR lesson based on student behavior.
+
+## Current state machine nodes
+{json.dumps(current_nodes, indent=2)}
+
+## Telemetry summary
+{json.dumps(telemetry_summary, indent=2)}
+
+## Your task
+Return a JSON object with a "patches" array. Each patch has an "op" field:
+- "add_node": add a new node. Include "node" (full node object).
+- "update_transition": redirect a transition. Include "from_node", "transition_index", "to".
+- "update_component": update a component's config. Include "component_id", "config".
+- "despawn_component": remove a component. Include "component_id".
+
+If no adaptation is needed, return {{"patches": []}}.
+
+Return ONLY the JSON object."""
+
+    # =========================================================================
+    # Internal: coerce raw LLM output → LessonManifest with validation
+    # =========================================================================
+
+    def _coerce_manifest(
+        self,
+        raw: Dict[str, Any],
+        session_id: str,
+        student_id: str,
+        student_name: str,
+        curriculum_plan: Dict[str, Any],
+        learner_profile: Dict[str, Any],
+    ) -> LessonManifest:
+        """
+        Attempt to parse the LLM output into a LessonManifest.
+        Fixes common issues (invalid anchors, invalid component types) in place.
+        Falls back to a minimal manifest on unrecoverable failure.
+        """
+        try:
+            raw["session_id"] = session_id
+
+            # Fix invalid anchors
+            for comp in raw.get("components", []):
+                if comp.get("anchor") not in VALID_ANCHORS:
+                    comp["anchor"] = "AnchorPanel_0"
+                if comp.get("component_type") not in [c.value for c in ComponentType]:
+                    comp["component_type"] = "info_panel"
+
+            return LessonManifest(**raw)
+        except Exception as e:
+            logger.warning("Manifest parse failed (%s), using fallback.", e)
+            return self._fallback_manifest(
+                session_id=session_id,
+                student_id=student_id,
+                student_name=student_name,
+                curriculum_plan=curriculum_plan,
+                learner_profile=learner_profile,
+            )
+
+    def _fallback_manifest(
+        self,
+        session_id: str,
+        student_id: str,
+        student_name: str,
+        curriculum_plan: Dict[str, Any],
+        learner_profile: Dict[str, Any],
+    ) -> LessonManifest:
+        """Minimal valid manifest used when LLM output is unrecoverable."""
+        topic_name = curriculum_plan.get("topic_name", curriculum_plan.get("topic_code", "This Topic"))
+        topic_code = curriculum_plan.get("topic_code", "UNKNOWN")
+        learning_style = learner_profile.get("learning_style", "visual")
+
+        return LessonManifest(
+            session_id=session_id,
+            student=StudentSpec(id=student_id, display_name=student_name, learning_style=learning_style),
+            lesson=LessonSpec(
+                topic_code=topic_code,
+                topic_title=topic_name,
+                estimated_duration_seconds=480,
+            ),
+            scene=SceneSpec(environment_id=EnvironmentId.INDOOR, theme="classroom"),
+            components=[
+                ComponentInstance(
+                    component_id="teacher_main",
+                    component_type=ComponentType.TEACHER_AVATAR,
+                    anchor="AnchorTeacher",
+                    config={"character": "teacher", "gesture": "idle"},
+                ),
+                ComponentInstance(
+                    component_id="main_whiteboard",
+                    component_type=ComponentType.WHITEBOARD,
+                    anchor="AnchorWhiteboard",
+                    config={"title": topic_name, "body_text": "Let's explore this topic together."},
+                ),
+            ],
+            state_machine=StateMachine(
+                start_node_id="intro",
+                nodes=[
+                    StateMachineNode(
+                        node_id="intro",
+                        type="narration",
+                        narration=NarrationSpec(
+                            speaker_id="teacher_main",
+                            text=f"Welcome {student_name}! Today we're learning about {topic_name}. Let's get started.",
+                            emotion="friendly",
+                            gesture="wave",
+                        ),
+                        duration_seconds=6,
+                        transitions=[{"to": "summary", "condition": "always"}],
+                    ),
+                    StateMachineNode(
+                        node_id="summary",
+                        type="summary",
+                        narration=NarrationSpec(
+                            speaker_id="teacher_main",
+                            text=f"Great work today, {student_name}! You've taken the first step with {topic_name}.",
+                            emotion="friendly",
+                            gesture="celebrate",
+                        ),
+                        transitions=[{"to": "END", "condition": "always"}],
+                    ),
+                ],
+            ),
+            telemetry_config=TelemetryConfig(gaze_targets=["main_whiteboard"]),
+        )
+
+    # =========================================================================
+    # Internal: telemetry summariser (no LLM — rule-based)
+    # =========================================================================
+
+    def _summarise_telemetry(self, events: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Convert raw telemetry events into a summary that drives patch decisions.
+        Pure Python — no LLM cost.
+        """
+        quiz_wrong = any(
+            e.get("type") == "quiz_attempt" and not e.get("data", {}).get("correct")
+            for e in events
+        )
+        idle_duration = sum(
+            e.get("data", {}).get("duration_ms", 0)
+            for e in events
+            if e.get("type") == "idle"
+        )
+        replay_requests = sum(1 for e in events if e.get("type") == "replay_request")
+        low_engagement = idle_duration > 20_000 or replay_requests >= 2
+
+        needs_adaptation = quiz_wrong or low_engagement
+
+        return {
+            "needs_adaptation": needs_adaptation,
+            "quiz_wrong": quiz_wrong,
+            "low_engagement": low_engagement,
+            "idle_duration_ms": idle_duration,
+            "replay_requests": replay_requests,
+            "raw_event_count": len(events),
+        }
+
+    # =========================================================================
+    # generate_assessment_instructions — unchanged from original Agent E
     # =========================================================================
 
     def generate_assessment_instructions(
@@ -674,12 +547,7 @@ Return ONLY the JSON object, no additional text."""
         questions: List[Dict[str, Any]],
         assessment_type: str = "concept_check",
     ) -> Dict[str, Any]:
-        """
-        Generate VR instructions for in-lesson MCQ assessments.
-
-        Assessment UI panels remain as VRInstruction JSON (not C# scripts)
-        because they are driven by Unity's built-in UI system, not custom logic.
-        """
+        """Generate VR instructions for in-lesson MCQ assessments."""
         type_map = {
             "concept_check": AssessmentType.CONCEPT_CHECK,
             "mcq": AssessmentType.MCQ,
@@ -688,54 +556,54 @@ Return ONLY the JSON object, no additional text."""
 
         instructions = []
 
-        # Intro step
-        intro = VRInstruction(
-            step_id="assess_intro",
-            sequence_order=0,
-            avatar=AvatarAction(action=AvatarActionType.QUESTION),
-            voice=VoiceCommand(
-                text="Let's check your understanding! Answer these questions.",
-                emotion=VoiceEmotion.ENCOURAGING,
-            ),
-        )
-        instructions.append(intro.model_dump())
-
-        # Question steps
-        for i, q in enumerate(questions):
-            question_step = VRInstruction(
-                step_id=f"assess_q{i + 1}",
-                sequence_order=i + 1,
+        instructions.append(
+            VRInstruction(
+                step_id="assess_intro",
+                sequence_order=0,
                 avatar=AvatarAction(action=AvatarActionType.QUESTION),
                 voice=VoiceCommand(
-                    text=q.get("question_text", ""),
-                    emotion=VoiceEmotion.CALM,
+                    text="Let's check your understanding! Answer these questions.",
+                    emotion=VoiceEmotion.ENCOURAGING,
                 ),
-                assessment=AssessmentCommand(
-                    type=type_map.get(assessment_type, AssessmentType.MCQ),
-                    question_id=q.get("question_id", f"q{i + 1}"),
-                    question=q.get("question_text", ""),
-                    options=q.get("options"),
-                    input_mode=(
-                        InputMode.GAZE
-                        if q.get("question_type") == "mcq"
-                        else InputMode.VOICE
-                    ),
-                    time_limit_seconds=q.get("time_limit", 60),
-                ),
-            )
-            instructions.append(question_step.model_dump())
-
-        # Completion step
-        done = VRInstruction(
-            step_id="assess_done",
-            sequence_order=len(questions) + 1,
-            avatar=AvatarAction(action=AvatarActionType.CELEBRATE),
-            voice=VoiceCommand(
-                text="Great job! Let's see how you did.",
-                emotion=VoiceEmotion.ENCOURAGING,
-            ),
+            ).model_dump()
         )
-        instructions.append(done.model_dump())
+
+        for i, q in enumerate(questions):
+            instructions.append(
+                VRInstruction(
+                    step_id=f"assess_q{i + 1}",
+                    sequence_order=i + 1,
+                    avatar=AvatarAction(action=AvatarActionType.QUESTION),
+                    voice=VoiceCommand(
+                        text=q.get("question_text", ""),
+                        emotion=VoiceEmotion.CALM,
+                    ),
+                    assessment=AssessmentCommand(
+                        type=type_map.get(assessment_type, AssessmentType.MCQ),
+                        question_id=q.get("question_id", f"q{i + 1}"),
+                        question=q.get("question_text", ""),
+                        options=q.get("options"),
+                        input_mode=(
+                            InputMode.GAZE
+                            if q.get("question_type") == "mcq"
+                            else InputMode.VOICE
+                        ),
+                        time_limit_seconds=q.get("time_limit", 60),
+                    ),
+                ).model_dump()
+            )
+
+        instructions.append(
+            VRInstruction(
+                step_id="assess_done",
+                sequence_order=len(questions) + 1,
+                avatar=AvatarAction(action=AvatarActionType.CELEBRATE),
+                voice=VoiceCommand(
+                    text="Great job! Let's see how you did.",
+                    emotion=VoiceEmotion.ENCOURAGING,
+                ),
+            ).model_dump()
+        )
 
         return {
             "assessment_type": assessment_type,

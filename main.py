@@ -10,7 +10,7 @@ import json
 import logging
 from typing import List, Optional, AsyncGenerator
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, AnyHttpUrl
@@ -180,18 +180,12 @@ class SubmitExamRequest(BaseModel):
     responses: list
 
 
-# --- VR Script Feedback Model (agentAR feedback loop) ---
-class ScriptFeedbackRequest(BaseModel):
-    """
-    Sent by Unity after it attempts to compile a generated C# script.
-    If compilation errors are present, Agent E patches the script and
-    returns the corrected version so Unity can retry.
-    """
+# --- VR Telemetry Model ---
+class TelemetryRequest(BaseModel):
+    """Batched telemetry events sent by Unity every 2 seconds."""
 
     session_id: str
-    script_filename: str  # e.g. "ProjectileMotionController.cs"
-    errors: List[str] = []  # Compiler error strings from Unity Editor
-    success: bool = True  # True if compilation succeeded (no errors)
+    events: List[dict] = []
 
 
 # --- Legacy RAG Models (kept for backward compatibility) ---
@@ -405,27 +399,25 @@ async def get_teaching_content(req: TeachingContentRequest):
     """
     Generate teaching content for a specific topic.
 
-    Streams SSE events with ACTUAL content as it's generated:
+    Streams SSE events as content is generated:
     - event: profile         → learner profile data
     - event: curriculum      → curriculum plan
-    - event: pedagogy        → pedagogy plan (analogy, visualization)
+    - event: pedagogy        → pedagogy plan (analogy, approach)
     - event: section         → lesson section (one per subtopic)
-    - event: scene           → VR scene plan (Agent G output + asset_bindings)
-    - event: progress        → "Generating Unity C# scripts..." status
-    - event: csharp_script   → one generated C# MonoBehaviour script
-                               {filename, class_name, code, attach_to, step_type,
-                                learning_objective, sequence_order, validation_passed}
-    - event: scripts_complete → all scripts generated
-                               {session_id, total_scripts, entry_point}
-    - event: complete        → summary metadata (includes total_scripts, entry_point)
+    - event: scene_preload   → {environment_id, theme, teacher_greeting}
+                               Unity loads scene immediately; student sees teacher
+                               greeting while manifest generates in background.
+    - event: progress        → "Authoring lesson manifest..." status
+    - event: manifest        → full LessonManifest JSON (components + state machine)
+                               Unity starts the state machine runtime.
+    - event: complete        → summary metadata
     - event: done            → stream complete
 
-    Unity workflow for C# scripts:
-      1. On each 'csharp_script' event: write data.code to Assets/Scripts/data.filename
-      2. After 'scripts_complete': trigger Unity asset refresh / compilation
-      3. If compile errors: POST to /vr/script-feedback with error strings
-      4. Attach each MonoBehaviour to data.attach_to GameObject
-      5. Start lesson by activating the entry_point (SessionManager) GameObject
+    Unity workflow:
+      1. On 'scene_preload': load the named environment, spawn teacher avatar, play greeting.
+      2. On 'manifest': parse LessonManifest, walk state_machine from start_node_id.
+      3. Send telemetry batches to POST /vr/telemetry every 2s.
+      4. Send quiz responses to POST /vr/telemetry with type="quiz_response".
     """
     generator = orchestrator.generate_teaching_content_stream(
         student_id=req.student_id,
@@ -526,56 +518,149 @@ async def submit_exam(req: SubmitExamRequest):
 
 
 # ============================================================================
-# VR SCRIPT FEEDBACK ENDPOINT  (agentAR feedback loop)
+# VR TELEMETRY ENDPOINT  (manifest adaptation loop)
 # ============================================================================
 
 
-@app.post("/vr/script-feedback", tags=["VR Scripts"])
-async def receive_script_feedback(req: ScriptFeedbackRequest):
+@app.post("/vr/telemetry", tags=["VR"])
+async def receive_telemetry(req: TelemetryRequest):
     """
-    Unity compiler feedback endpoint — part of the agentAR-style ReAct loop.
+    Receive batched student behavior events from Unity.
 
-    After Unity receives a generated C# script via the 'csharp_script' SSE event,
-    it attempts to compile it.  If compilation succeeds, Unity sends:
-        {"session_id": "...", "script_filename": "...", "success": true}
-    and this endpoint returns {"status": "ok"}.
+    Unity sends these every 2 seconds (or immediately on quiz answers).
+    Agent E's patch_from_telemetry() analyses them and returns manifest
+    patches if the lesson needs real-time adaptation.
 
-    If compilation fails, Unity sends the error strings:
-        {"session_id": "...", "script_filename": "Foo.cs",
-         "errors": ["error CS0246: ...", ...], "success": false}
-    Agent E patches the script and returns the corrected source so Unity can
-    write the file and retry compilation.
+    Request body:
+        {"session_id": "...", "events": [ ...TelemetryEvent[] ... ]}
 
-    SSE event flow (for reference):
-        csharp_script      → Unity writes .cs file, triggers compile
-        ↓ (compile error)
-        POST /vr/script-feedback  → agent patches script
-        ↓ response: {"status": "patched", "script": {"filename": ..., "code": ...}}
-        Unity overwrites .cs file, triggers compile again
+    Response:
+        {"patches": [ ...ManifestPatch[] ... ]}   — empty list if no changes needed
+
+    Unity applies patches to its in-memory manifest copy and the running
+    state machine without interrupting the current node.
     """
-    if req.success or not req.errors:
-        return JSONResponse(status_code=200, content={"status": "ok"})
+    if not req.events:
+        return JSONResponse(status_code=200, content={"patches": []})
 
     try:
-        patched = await orchestrator.vr_agent.apply_unity_feedback(
+        patches = await orchestrator.vr_agent.patch_from_telemetry(
             session_id=req.session_id,
-            script_filename=req.script_filename,
-            errors=req.errors,
+            telemetry_events=req.events,
         )
         return JSONResponse(
             status_code=200,
-            content={"status": "patched", "script": patched},
-        )
-    except KeyError:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Session '{req.session_id}' or script '{req.script_filename}' not found. "
-                "Ensure the session was started via /teach/content before sending feedback."
-            ),
+            content={"patches": [p.model_dump() for p in patches]},
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# VR WEBSOCKET ENDPOINT  (alternative real-time channel for Unity)
+# ============================================================================
+
+
+@app.websocket("/ws/lesson")
+async def lesson_websocket(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time bi-directional lesson delivery.
+
+    Unity connects, sends start_lesson, receives scene_preload → manifest,
+    then continues sending telemetry and receiving patches over the same socket.
+
+    Message shapes (Unity → server):
+        {"event": "start_lesson", "student_id": "...", "topic_code": "...", "subject_code": "..."}
+        {"event": "telemetry", "session_id": "...", "events": [...]}
+        {"event": "complete_lesson", "session_id": "..."}
+
+    Message shapes (server → Unity):
+        {"event": "progress", ...}
+        {"event": "scene_preload", ...}
+        {"event": "manifest", ...}
+        {"event": "manifest_patch", "patches": [...]}
+        {"event": "error", "message": "..."}
+    """
+    await websocket.accept()
+    session_id: Optional[str] = None
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            event = data.get("event")
+
+            if event == "start_lesson":
+                student_id = data.get("student_id", "")
+                topic_code = data.get("topic_code", "")
+                subject_code = data.get("subject_code", "PHY")
+
+                profile_result = await orchestrator.profile_agent.process(
+                    {"action": "get_profile", "student_id": student_id}
+                )
+                curriculum_plan = {
+                    "topic_code": topic_code,
+                    "topic_name": topic_code,
+                    "subject_code": subject_code,
+                    "depth": "conceptual+visual",
+                    "subtopics": [],
+                }
+                syllabus = orchestrator.curriculum_agent.get_syllabus(subject_code)
+                for t in syllabus.get("topics", []):
+                    if t["topic_code"] == topic_code:
+                        curriculum_plan.update({
+                            "subtopics": t.get("subtopics", []),
+                            "topic_name": t.get("topic_name", topic_code),
+                            "estimated_duration_minutes": t.get("estimated_minutes", 8),
+                        })
+                        break
+
+                pedagogy_result = await orchestrator.pedagogy_agent.process(
+                    {
+                        "action": "get_teaching_plan",
+                        "student_id": student_id,
+                        "subject_code": subject_code,
+                        "topic_code": topic_code,
+                        "topic_name": curriculum_plan["topic_name"],
+                    }
+                )
+
+                import uuid as _uuid
+                session_id = str(_uuid.uuid4())
+                student_name = profile_result.get("name") or profile_result.get("display_name", student_id)
+
+                async for evt in orchestrator.vr_agent.author_manifest_stream(
+                    session_id=session_id,
+                    student_id=student_id,
+                    student_name=student_name,
+                    curriculum_plan={**curriculum_plan, "session_id": session_id, "student_id": student_id},
+                    pedagogy_plan=pedagogy_result,
+                    learner_profile=profile_result,
+                ):
+                    await websocket.send_json(evt)
+
+            elif event == "telemetry" and session_id:
+                patches = await orchestrator.vr_agent.patch_from_telemetry(
+                    session_id=session_id,
+                    telemetry_events=data.get("events", []),
+                )
+                if patches:
+                    await websocket.send_json({
+                        "event": "manifest_patch",
+                        "session_id": session_id,
+                        "patches": [p.model_dump() for p in patches],
+                    })
+
+            elif event == "complete_lesson":
+                await websocket.send_json({"event": "done", "session_id": session_id})
+                break
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"event": "error", "message": str(e)})
+        except Exception:
+            pass
 
 
 # ============================================================================

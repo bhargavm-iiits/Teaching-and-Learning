@@ -33,6 +33,7 @@ from models.manifest import (
     LessonSpec,
     ManifestPatch,
     NarrationSpec,
+    NodeType,
     PatchOp,
     SceneSpec,
     StateMachine,
@@ -385,7 +386,7 @@ Schema:
     "nodes": [
       {{
         "node_id": "intro",
-        "type": "narration",
+        "type": "narration",  ← must be one of: narration | demo | interaction | quiz | branch | summary | wait
         "narration": {{
           "speaker_id": "teacher_main",
           "text": "...",
@@ -454,15 +455,33 @@ Return ONLY the JSON object."""
         Fixes common issues (invalid anchors, invalid component types) in place.
         Falls back to a minimal manifest on unrecoverable failure.
         """
+        # Map common LLM hallucinations to valid NodeType values
+        _NODE_TYPE_MAP = {
+            "visual_demo": "demo",
+            "interactive_task": "interaction",
+            "interactive": "interaction",
+            "assessment": "quiz",
+            "intro": "narration",
+            "introduction": "narration",
+            "conclusion": "summary",
+        }
+        _VALID_NODE_TYPES = {n.value for n in NodeType}
+
         try:
             raw["session_id"] = session_id
 
-            # Fix invalid anchors
+            # Fix invalid anchors and component types
             for comp in raw.get("components", []):
                 if comp.get("anchor") not in VALID_ANCHORS:
                     comp["anchor"] = "AnchorPanel_0"
                 if comp.get("component_type") not in [c.value for c in ComponentType]:
                     comp["component_type"] = "info_panel"
+
+            # Fix invalid node types
+            for node in raw.get("state_machine", {}).get("nodes", []):
+                t = node.get("type", "")
+                if t not in _VALID_NODE_TYPES:
+                    node["type"] = _NODE_TYPE_MAP.get(t, "narration")
 
             return LessonManifest(**raw)
         except Exception as e:

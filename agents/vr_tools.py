@@ -144,7 +144,7 @@ class VRToolRegistry:
     def __init__(self, llm):
         """
         Args:
-            llm: A LangChain ChatAnthropic (or compatible) instance from BaseAgent.
+            llm: An OpenAI-compatible client instance from BaseAgent.
         """
         self.llm = llm
 

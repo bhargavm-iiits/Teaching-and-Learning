@@ -20,7 +20,7 @@ import httpx
 from pypdf import PdfReader
 from pinecone import Pinecone
 from langchain_openai import AzureOpenAIEmbeddings
-from langchain_anthropic import ChatAnthropic
+from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -68,15 +68,11 @@ def split_text(text: str, chunk_size: int = 1200, chunk_overlap: int = 150) -> L
 # LLM and Embeddings Clients
 # ============================================================================
 
-def get_anthropic_client() -> ChatAnthropic:
-    """Get Anthropic Claude client for topic detection (uses same config as agents)."""
-    base_url = os.getenv("ANTHROPIC_BASE_URL")
-    return ChatAnthropic(
-        model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
-        api_key=os.getenv("ANTHROPIC_API_KEY"),
-        base_url=base_url if base_url else None,
-        temperature=0,
-        max_tokens=2000,
+def get_qwen_client() -> OpenAI:
+    """Get Qwen (DashScope) client for topic detection."""
+    return OpenAI(
+        api_key=os.getenv("DASHSCOPE_API_KEY"),
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     )
 
 
@@ -99,7 +95,7 @@ def get_pinecone_index():
 # ============================================================================
 
 async def infer_topics(
-    llm: ChatAnthropic,
+    llm: OpenAI,
     sample_text: str,
     subject_code: str,
     max_topics: int = 12
@@ -130,10 +126,16 @@ CONTENT END
 Return ONLY the JSON object, no other text."""
 
     try:
-        resp = await asyncio.get_event_loop().run_in_executor(
-            None, llm.invoke, prompt
-        )
-        txt = resp.content if hasattr(resp, "content") else str(resp)
+        def _call():
+            r = llm.chat.completions.create(
+                model=os.getenv("QWEN_MODEL", "qwen3-plus"),
+                messages=[{"role": "user", "content": prompt}],
+                extra_body={"enable_thinking": False},
+            )
+            return r.choices[0].message.content or ""
+
+        resp = await asyncio.get_event_loop().run_in_executor(None, _call)
+        txt = resp
         
         # Parse JSON from response
         if "```json" in txt:
@@ -289,7 +291,7 @@ async def _process_pdf(
         raise ValueError("No text chunks produced from PDF.")
     
     # 4) Build clients
-    llm = get_anthropic_client()
+    llm = get_qwen_client()
     embed_client = get_embeddings_client()
     index = get_pinecone_index()
     

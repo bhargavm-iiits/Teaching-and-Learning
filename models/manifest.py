@@ -202,20 +202,29 @@ class LessonManifest(BaseModel):
 
 
 class PatchOp(str, Enum):
+    # State machine ops (generic renderers)
     ADD_NODE = "add_node"
     UPDATE_TRANSITION = "update_transition"
     UPDATE_COMPONENT = "update_component"
     DESPAWN_COMPONENT = "despawn_component"
+    # Cyclist / scene-specific HUD ops (VR team)
+    UPDATE_STATUS = "update_status"
+    UPDATE_TITLE = "update_title"
+    UPDATE_INTRO = "update_intro"
+    UPDATE_DISTANCE = "update_distance"
 
 
 class ManifestPatch(BaseModel):
-    op: PatchOp
-    # add_node
+    # Named "patch_type" to match the VR team's C# ManifestPatch.patch_type field
+    patch_type: str
+    # State machine fields
     node: Optional[Dict[str, Any]] = None
-    # update_transition
     from_node: Optional[str] = None
     transition_index: Optional[int] = None
     to: Optional[str] = None
-    # update_component / despawn_component
     component_id: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+    # Cyclist scene HUD fields (VR team)
+    value: Optional[str] = None
+    float_value: Optional[float] = None
+    lines: Optional[List[str]] = None

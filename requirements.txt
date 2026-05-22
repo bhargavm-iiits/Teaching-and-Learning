@@ -10,7 +10,7 @@ pypdf
 
 # LLM Providers
 langchain-openai
-langchain-anthropic
+openai
 
 # Databases
 pinecone

@@ -26,5 +26,5 @@ COPY . .
 # The command to run your application
 # Uvicorn will run on host 0.0.0.0 and use the port specified
 # by the PORT environment variable, which Cloud Run provides automatically.
-ENV PORT=8080
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+ENV PORT=8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

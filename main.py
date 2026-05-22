@@ -5,15 +5,24 @@ Main entry point for the API. Combines existing RAG functionality
 with the new multi-agent system for personalized VR teaching.
 """
 
-import os
 import json
 import logging
-from typing import List, Optional, AsyncGenerator
+import os
+from typing import AsyncGenerator, List, Optional
+from unittest import main
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, AnyHttpUrl
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import AnyHttpUrl, BaseModel
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 # DEBUG level so _parse_json per-strategy logs are visible in the terminal.
@@ -26,10 +35,10 @@ logging.basicConfig(
 # Silence noisy third-party loggers
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("anthropic").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 logging.getLogger("hpack").setLevel(logging.WARNING)
 logging.getLogger("h2").setLevel(logging.WARNING)
 
@@ -64,23 +73,21 @@ async def sse_stream(generator) -> AsyncGenerator[str, None]:
 
 
 # Existing RAG imports
-from gen_topic import ingest_pdf_from_url
-from gen_notes import generate_notes_for_topic
-from gen_quiz import generate_quiz_for_topic
-from rag_chatbot import chat_query, reset_session
-
 # New multi-agent imports
 from agents.orchestrator import orchestrator
-from db.supabase_client import supabase_manager
 
 # Content ingestion with class/subject metadata
 from content_ingestion import (
-    ingest_content_from_url,
     ingest_content_from_base64,
     ingest_content_from_bytes,
+    ingest_content_from_url,
     search_content,
 )
-
+from db.supabase_client import supabase_manager
+from gen_notes import generate_notes_for_topic
+from gen_quiz import generate_quiz_for_topic
+from gen_topic import ingest_pdf_from_url
+from rag_chatbot import chat_query, reset_session
 
 # ============================================================================
 # FastAPI App Setup
@@ -557,6 +564,27 @@ async def receive_telemetry(req: TelemetryRequest):
 
 
 # ============================================================================
+# WS-INFO ENDPOINT  (lets Unity discover the WebSocket URL at runtime)
+# ============================================================================
+
+
+@app.get("/ws-info", tags=["VR"])
+async def ws_info():
+    """
+    Returns the WebSocket URL for the lesson endpoint.
+
+    ManifestReceiver.cs fetches this on startup so the server URL can be
+    discovered without being hardcoded in the Unity scene.
+    """
+    return JSONResponse(
+        content={
+            "websocket_url": "ws://0.0.0.0:8000/ws/lesson",
+            "note": "Connect to this WebSocket to receive lesson manifests and send telemetry.",
+        }
+    )
+
+
+# ============================================================================
 # VR WEBSOCKET ENDPOINT  (alternative real-time channel for Unity)
 # ============================================================================
 
@@ -607,11 +635,15 @@ async def lesson_websocket(websocket: WebSocket):
                 syllabus = orchestrator.curriculum_agent.get_syllabus(subject_code)
                 for t in syllabus.get("topics", []):
                     if t["topic_code"] == topic_code:
-                        curriculum_plan.update({
-                            "subtopics": t.get("subtopics", []),
-                            "topic_name": t.get("topic_name", topic_code),
-                            "estimated_duration_minutes": t.get("estimated_minutes", 8),
-                        })
+                        curriculum_plan.update(
+                            {
+                                "subtopics": t.get("subtopics", []),
+                                "topic_name": t.get("topic_name", topic_code),
+                                "estimated_duration_minutes": t.get(
+                                    "estimated_minutes", 8
+                                ),
+                            }
+                        )
                         break
 
                 pedagogy_result = await orchestrator.pedagogy_agent.process(
@@ -625,14 +657,21 @@ async def lesson_websocket(websocket: WebSocket):
                 )
 
                 import uuid as _uuid
+
                 session_id = str(_uuid.uuid4())
-                student_name = profile_result.get("name") or profile_result.get("display_name", student_id)
+                student_name = profile_result.get("name") or profile_result.get(
+                    "display_name", student_id
+                )
 
                 async for evt in orchestrator.vr_agent.author_manifest_stream(
                     session_id=session_id,
                     student_id=student_id,
                     student_name=student_name,
-                    curriculum_plan={**curriculum_plan, "session_id": session_id, "student_id": student_id},
+                    curriculum_plan={
+                        **curriculum_plan,
+                        "session_id": session_id,
+                        "student_id": student_id,
+                    },
                     pedagogy_plan=pedagogy_result,
                     learner_profile=profile_result,
                 ):
@@ -644,11 +683,16 @@ async def lesson_websocket(websocket: WebSocket):
                     telemetry_events=data.get("events", []),
                 )
                 if patches:
-                    await websocket.send_json({
-                        "event": "manifest_patch",
-                        "session_id": session_id,
-                        "patches": [p.model_dump() for p in patches],
-                    })
+                    # Send as a single flat object keyed "manifest_patch" to match
+                    # ManifestReceiver.cs ServerMessage.manifest_patch field name.
+                    # Pick the first patch (highest priority adaptation).
+                    await websocket.send_json(
+                        {
+                            "event": "manifest_patch",
+                            "session_id": session_id,
+                            "manifest_patch": patches[0].model_dump(),
+                        }
+                    )
 
             elif event == "complete_lesson":
                 await websocket.send_json({"event": "done", "session_id": session_id})
@@ -882,3 +926,9 @@ async def root():
             ],
         },
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

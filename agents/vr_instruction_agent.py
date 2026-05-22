@@ -203,10 +203,43 @@ class VRInstructionAgent(BaseAgent):
             learner_profile=learner_profile,
         )
 
+        manifest_dict = manifest.model_dump()
+
+        # Inject cyclist-scene config so ManifestReceiver.cs can apply it directly.
+        # Fields match the C# LessonManifest flat schema the VR team declared.
+        topic_code = curriculum_plan.get("topic_code", "")
+        topic_name = curriculum_plan.get("topic_name", topic_code)
+        mastery = learner_profile.get("mastery_scores", {}).get(topic_code, 50)
+        if mastery < 40:
+            journey_distance, cycling_speed = 30.0, 2.0
+        elif mastery < 70:
+            journey_distance, cycling_speed = 50.0, 5.0
+        elif mastery < 85:
+            journey_distance, cycling_speed = 80.0, 8.0
+        else:
+            journey_distance, cycling_speed = 100.0, 12.0
+
+        manifest_dict["lesson_title"] = topic_name
+        manifest_dict["journey_distance"] = journey_distance
+        manifest_dict["cycling_speed"] = cycling_speed
+        manifest_dict["intro_text"] = (
+            f"Welcome {student_name}! Today we learn about {topic_name}. "
+            f"Ride {int(journey_distance)} metres while watching the live speed "
+            f"formula update on your HUD."
+        )
+        manifest_dict["status"] = "Press the trigger to begin your journey!"
+        manifest_dict["progress"] = 0.0
+        manifest_dict["concept_text"] = [
+            "Speed = Distance ÷ Time  (v = s/t)",
+            f"Ride {int(journey_distance)} m and watch the formula update live.",
+            "Average speed = total distance / total time taken.",
+        ]
+        manifest_dict["title"] = topic_name
+
         yield {
             "event": "manifest",
             "session_id": session_id,
-            "manifest": manifest.model_dump(),
+            "manifest": manifest_dict,
         }
 
     # =========================================================================
@@ -377,26 +410,29 @@ Schema:
         manifest: LessonManifest,
         telemetry_summary: Dict[str, Any],
     ) -> str:
-        current_nodes = [
-            {"node_id": n.node_id, "type": n.type}
-            for n in manifest.state_machine.nodes
-        ]
+        topic = manifest.lesson.topic_title
         return f"""You are Agent E adapting a live VR lesson based on student behavior.
 
-## Current state machine nodes
-{json.dumps(current_nodes, indent=2)}
+## Topic
+{topic}
 
 ## Telemetry summary
 {json.dumps(telemetry_summary, indent=2)}
 
 ## Your task
-Return a JSON object with a "patches" array. Each patch has an "op" field:
-- "add_node": add a new node. Include "node" (full node object).
-- "update_transition": redirect a transition. Include "from_node", "transition_index", "to".
-- "update_component": update a component's config. Include "component_id", "config".
-- "despawn_component": remove a component. Include "component_id".
+Return a JSON object with a "patches" array of 1–3 patches.
+Each patch must have a "patch_type" field (string) and the matching value fields:
 
-If no adaptation is needed, return {{"patches": []}}.
+patch_type "update_status"   → include "value" (string shown in the HUD status line)
+patch_type "update_title"    → include "value" (string shown in the HUD title)
+patch_type "update_intro"    → include "value" (string shown on the intro/concept board)
+patch_type "update_distance" → include "float_value" (new journeyDistance in metres, 10–100)
+
+Rules:
+- quiz_wrong=true  → add an "update_status" patch with an encouraging, corrective message and
+                     an "update_intro" patch that re-explains the core concept simply.
+- low_engagement=true → add an "update_status" patch with a motivating message.
+- If no adaptation is needed, return {{"patches": []}}.
 
 Return ONLY the JSON object."""
 
@@ -515,16 +551,27 @@ Return ONLY the JSON object."""
         Convert raw telemetry events into a summary that drives patch decisions.
         Pure Python — no LLM cost.
         """
-        quiz_wrong = any(
-            e.get("type") == "quiz_attempt" and not e.get("data", {}).get("correct")
-            for e in events
-        )
+        def _event_name(e: dict) -> str:
+            # ManifestReceiver sends {"name": ...}; legacy events use {"type": ...}
+            return e.get("type") or e.get("name", "")
+
+        def _is_quiz_wrong(e: dict) -> bool:
+            if _event_name(e) != "quiz_attempt":
+                return False
+            # Legacy: data.correct; ManifestReceiver: value == "wrong" / "false"
+            data_correct = e.get("data", {}).get("correct")
+            if data_correct is not None:
+                return not data_correct
+            val = str(e.get("value", "")).lower()
+            return val in ("wrong", "false", "0", "incorrect")
+
+        quiz_wrong = any(_is_quiz_wrong(e) for e in events)
         idle_duration = sum(
             e.get("data", {}).get("duration_ms", 0)
             for e in events
-            if e.get("type") == "idle"
+            if _event_name(e) == "idle"
         )
-        replay_requests = sum(1 for e in events if e.get("type") == "replay_request")
+        replay_requests = sum(1 for e in events if _event_name(e) == "replay_request")
         low_engagement = idle_duration > 20_000 or replay_requests >= 2
 
         needs_adaptation = quiz_wrong or low_engagement

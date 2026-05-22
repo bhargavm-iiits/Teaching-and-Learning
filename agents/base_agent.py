@@ -12,7 +12,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Type, TypeVar
 
-from langchain_anthropic import ChatAnthropic
+from openai import OpenAI
 from pydantic import BaseModel
 
 from config import config
@@ -42,14 +42,13 @@ class BaseAgent(ABC):
 
         Args:
             temperature: LLM temperature (0.0 = deterministic, 1.0 = creative)
-            model: Model name (defaults to config.ANTHROPIC_MODEL)
+            model: Model name (defaults to config.QWEN_MODEL)
         """
-        self.llm = ChatAnthropic(
-            model=model or config.ANTHROPIC_MODEL,
-            api_key=config.ANTHROPIC_API_KEY,
-            base_url=config.ANTHROPIC_BASE_URL if config.ANTHROPIC_BASE_URL else None,
-            temperature=temperature,
-            max_tokens=8192,  # prevent truncation on large lesson content responses
+        self._model = model or config.QWEN_MODEL
+        self._temperature = temperature
+        self.llm = OpenAI(
+            api_key=config.DASHSCOPE_API_KEY,
+            base_url=config.DASHSCOPE_BASE_URL,
         )
         self._name = self.__class__.__name__
 
@@ -71,13 +70,19 @@ class BaseAgent(ABC):
         """
         pass
 
+    def _sync_invoke(self, prompt: str) -> str:
+        """Synchronous Qwen call — intended to run in a thread via run_in_executor."""
+        response = self.llm.chat.completions.create(
+            model=self._model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=self._temperature,
+            extra_body={"enable_thinking": False},
+        )
+        return response.choices[0].message.content or ""
+
     async def _invoke_llm(self, prompt: str) -> str:
         """
         Invoke the LLM with a prompt and return the response text.
-
-        Handles both plain-string and list-of-content-blocks responses
-        from Claude (the Anthropic API returns content as either a str
-        or a list[dict] with {"type": "text", "text": "..."} entries).
 
         Args:
             prompt: The prompt to send to the LLM
@@ -85,30 +90,9 @@ class BaseAgent(ABC):
         Returns:
             The LLM's response as a plain string
         """
-        response = await asyncio.get_event_loop().run_in_executor(
-            None, self.llm.invoke, prompt
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._sync_invoke, prompt
         )
-        content = response.content if hasattr(response, "content") else response
-
-        # Claude sometimes returns a list of content blocks instead of a plain string
-        if isinstance(content, list):
-            parts = []
-            for block in content:
-                if isinstance(block, dict):
-                    parts.append(block.get("text", ""))
-                elif hasattr(block, "text"):
-                    parts.append(block.text)
-                else:
-                    parts.append(str(block))
-            text = "".join(parts)
-            logger.debug(
-                "[_invoke_llm] content was a list (%d blocks) — joined to %d chars",
-                len(content),
-                len(text),
-            )
-            return text
-
-        return str(content)
 
     async def _invoke_llm_json(self, prompt: str) -> Dict[str, Any]:
         """

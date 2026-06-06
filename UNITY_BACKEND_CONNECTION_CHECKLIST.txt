@@ -1,0 +1,209 @@
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+INFO:     Will watch for changes in these directories: ['C:\\Users\\Dr Himangshu\\Downloads\\Teaching-Multi-Agent-System\\Teaching-Multi-Agent-System']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [34776] using WatchFiles
+INFO:     Started server process [41184]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:50862 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50862 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60460 - "GET / HTTP/1.1" 200 OK
+
+ *  History restored 
+
+PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> (Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (& "c:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System\.venv\Scripts\Activate.ps1")
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> c:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System" ; python main.py
+>> 
+>> INFO:     Started server process [30004]
+>> INFO:     Waiting for application startup.
+>> INFO:     Application startup complete.
+>> INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit) 
+>> ^C
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> (Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (& "c:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System\.venv\Scripts\Activate.ps1")
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> uvicorn main:app --host 0.0.0.0 --port 8000 --reload                                                                            
+INFO:     Will watch for changes in these directories: ['C:\\Users\\Dr Himangshu\\Downloads\\Teaching-Multi-Agent-System\\Teaching-Multi-Agent-System']
+ERROR:    [WinError 10013] An attempt was made to access a socket in a way forbidden by its access permissions
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+INFO:     Will watch for changes in these directories: ['C:\\Users\\Dr Himangshu\\Downloads\\Teaching-Multi-Agent-System\\Teaching-Multi-Agent-System']
+ERROR:    [WinError 10013] An attempt was made to access a socket in a way forbidden by its access permissions
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> .\.venv\Scripts\python.exe check_backend_connections.py                                                                         
+                                                             
+============================================================
+============ Step 1: Checking Required Packages ============
+============================================================
+✔ Module 'dotenv' is installed.
+✔ Module 'openai' is installed.
+✔ Module 'pinecone' is installed.
+✔ Module 'supabase' is installed.
+✔ Module 'langchain_openai' is installed.
+✔ Module 'fastapi' is installed.
+✔ Module 'httpx' is installed.
+✔ All required packages are available.
+
+============================================================
+====== Step 2: Checking Environment Variables (.env) =======
+============================================================
+✔ DASHSCOPE_API_KEY is set: sk-e...949d (Qwen / DashScope API Key)
+✔ QWEN_MODEL is set: qwen...plus (Qwen Model ID)
+✔ SUPABASE_URL is set: http...e.co (Supabase Project URL)
+✔ SUPABASE_KEY is set: sb_p...nA3O (Supabase Anon/Public Key)
+ℹ SUPABASE_SERVICE_KEY (Supabase Service Role Key (Optional)) is not set. (Optional)
+✔ PINECONE_API_KEY is set: pcsk...HF41 (Pinecone API Key)
+✔ PINECONE_HOST is set: http...e.io (Pinecone Index Host URL)
+✔ AZURE_OPENAI_DEPLOYMENT_NAME is set: text...arge (Azure OpenAI Deployment Name (Optional))
+✔ AZURE_OPENAI_EMBEDDING_DEPLOYMENT is set: text...arge (Azure OpenAI Embeddings Deployment (Optional))
+
+============================================================
+===== Step 3: Testing Qwen / DashScope API Connection ======
+============================================================
+ℹ Connecting to DashScope using model: qwen3.6-plus...
+✔ Successfully connected to Qwen/DashScope API!
+ℹ Response from model: Hello! 👋 How can I help you today?
+
+============================================================
+======= Step 4: Testing Supabase Database Connection =======
+============================================================
+ℹ Connecting to Supabase at: https://bdnwnnfxdstngkwxgvzk.supabase.co...
+ℹ Querying 'classes' table...
+✘ Failed to connect to Supabase: [Errno 11001] getaddrinfo failed
+ℹ Note: Please make sure that your Supabase instance is active and 'classes' table exists.
+
+============================================================
+=== Step 5: Testing Pinecone Vector Database Connection ====
+============================================================
+ℹ Connecting to Pinecone...
+ℹ Fetching index stats...
+✔ Successfully connected to Pinecone Vector Database!
+ℹ Index Dimensions: 3072
+ℹ Total Vector Count: 2606
+ℹ Available Namespaces: ['858806d0-feaf-42c3-b3b0-94cc466fc1b6', 'f0da1511-23f1-4625-bf4e-25fa372b49a0', '8f99bde3-2682-4a4a-b40f-305c8f0ab52c', '0ef84962-de8e-4203-bd55-06b15c2fab26', '3eecec07-6e27-436d-99e0-b9078727c44d', 'a4b5df88-a29c-4ae4-8bd7-795dc17507ff', '4f1cb0f2-5e3d-498f-80cf-0a857f14f371', 'a3970531-d509-491c-9af7-abb34522d62d', '9d6172cd-6865-4caf-b323-de0749b74335', '76b118ec-e00a-427d-987e-89f6969103e1', '788586ce-9557-4671-a865-29f195f55229', '3bc341dd-a33d-457e-956b-fe04c709f414', 'c11_physics', '09b2e473-b1a0-46bc-89fb-2da0c1c259e0', '283fa63a-284c-4721-bb74-45bb434788ae', '1465ba7f-e5b6-472f-b049-1d7790dea88d', 'eaf4915d-87d6-45d5-b5b5-cd8734444561', '4562cbf4-541e-42f5-b4cf-cfcf85bf2867', 'c8_maths', '9350cd3d-b924-4131-a490-d5633fc783a6', 'a3fff5bf-1e50-4660-a823-c46142e5124d', 'a3dfdae2-49b8-45d2-9206-35064c09521e']
+
+============================================================
+======= Step 6: Unity Connectivity & Port Discovery ========
+============================================================
+ℹ Understanding the Unity & Backend Architecture:
+  - The FastAPI server acts as a SERVER (listening on port 8000/8080 by default).
+  - The Unity VR application acts as a CLIENT. It connects to the backend server.
+  - The backend serves lesson manifests & C# scripts that reference prefabs.
+  - The Unity Client loads assets locally from its own Project folder.
+  - Therefore, the backend does not 'fetch' assets from Unity; Unity reads metadata from the backend.
+✔ FastAPI Server is ALREADY RUNNING on port 8000!
+ℹ Unity can connect right now to: ws://localhost:8000/ws/lesson
+✔ Unity Editor is currently RUNNING on this PC!
+ℹ Once you start your FastAPI backend server, the Unity client will be able to connect and fetch/compile assets instantly.
+
+============================================================
+================== Diagnostics Completed ===================
+============================================================
+If all critical checks passed, your backend is ready to run!
+To start the backend, run: 
+python main.py or uvicorn main:app --reload --port 8000
+============================================================
+
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> (.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+INFO:     Will watch for changes in these directories: ['C:\\Users\\Dr Himangshu\\Downloads\\Teaching-Multi-Agent-System\\Teaching-Multi-Agent-System']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [34776] using WatchFiles
+INFO:     Started server process [41184]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:50862 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50862 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60460 - "GET / HTTP/1.1" 200 OK
+
+ *  History restored 
+
+PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> (Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (& "c:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System\.venv\Scripts\Activate.ps1")
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> c:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System" ; python main.py
+>> 
+>> INFO:     Started server process [30004]
+>> INFO:     Waiting for application startup.
+>> INFO:     Application startup complete.
+>> INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit) 
+>> ^C
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> (Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (& "c:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System\.venv\Scripts\Activate.ps1")
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> uvicorn main:app --host 0.0.0.0 --port 8000 --reload                                                                            
+INFO:     Will watch for changes in these directories: ['C:\\Users\\Dr Himangshu\\Downloads\\Teaching-Multi-Agent-System\\Teaching-Multi-Agent-System']
+ERROR:    [WinError 10013] An attempt was made to access a socket in a way forbidden by its access permissions
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+INFO:     Will watch for changes in these directories: ['C:\\Users\\Dr Himangshu\\Downloads\\Teaching-Multi-Agent-System\\Teaching-Multi-Agent-System']
+ERROR:    [WinError 10013] An attempt was made to access a socket in a way forbidden by its access permissions
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> .\.venv\Scripts\python.exe check_backend_connections.py                                                                         
+                                                             
+============================================================
+============ Step 1: Checking Required Packages ============
+============================================================
+✔ Module 'dotenv' is installed.
+✔ Module 'openai' is installed.
+✔ Module 'pinecone' is installed.
+✔ Module 'supabase' is installed.
+✔ Module 'langchain_openai' is installed.
+✔ Module 'fastapi' is installed.
+✔ Module 'httpx' is installed.
+✔ All required packages are available.
+
+============================================================
+====== Step 2: Checking Environment Variables (.env) =======
+============================================================
+✔ DASHSCOPE_API_KEY is set: sk-e...949d (Qwen / DashScope API Key)
+✔ QWEN_MODEL is set: qwen...plus (Qwen Model ID)
+✔ SUPABASE_URL is set: http...e.co (Supabase Project URL)
+✔ SUPABASE_KEY is set: sb_p...nA3O (Supabase Anon/Public Key)
+ℹ SUPABASE_SERVICE_KEY (Supabase Service Role Key (Optional)) is not set. (Optional)
+✔ PINECONE_API_KEY is set: pcsk...HF41 (Pinecone API Key)
+✔ PINECONE_HOST is set: http...e.io (Pinecone Index Host URL)
+✔ AZURE_OPENAI_DEPLOYMENT_NAME is set: text...arge (Azure OpenAI Deployment Name (Optional))
+✔ AZURE_OPENAI_EMBEDDING_DEPLOYMENT is set: text...arge (Azure OpenAI Embeddings Deployment (Optional))
+
+============================================================
+===== Step 3: Testing Qwen / DashScope API Connection ======
+============================================================
+ℹ Connecting to DashScope using model: qwen3.6-plus...
+✔ Successfully connected to Qwen/DashScope API!
+ℹ Response from model: Hello! 👋 How can I help you today?
+
+============================================================
+======= Step 4: Testing Supabase Database Connection =======
+============================================================
+ℹ Connecting to Supabase at: https://bdnwnnfxdstngkwxgvzk.supabase.co...
+ℹ Querying 'classes' table...
+✘ Failed to connect to Supabase: [Errno 11001] getaddrinfo failed
+ℹ Note: Please make sure that your Supabase instance is active and 'classes' table exists.
+
+============================================================
+=== Step 5: Testing Pinecone Vector Database Connection ====
+============================================================
+ℹ Connecting to Pinecone...
+ℹ Fetching index stats...
+✔ Successfully connected to Pinecone Vector Database!
+ℹ Index Dimensions: 3072
+ℹ Total Vector Count: 2606
+ℹ Available Namespaces: ['858806d0-feaf-42c3-b3b0-94cc466fc1b6', 'f0da1511-23f1-4625-bf4e-25fa372b49a0', '8f99bde3-2682-4a4a-b40f-305c8f0ab52c', '0ef84962-de8e-4203-bd55-06b15c2fab26', '3eecec07-6e27-436d-99e0-b9078727c44d', 'a4b5df88-a29c-4ae4-8bd7-795dc17507ff', '4f1cb0f2-5e3d-498f-80cf-0a857f14f371', 'a3970531-d509-491c-9af7-abb34522d62d', '9d6172cd-6865-4caf-b323-de0749b74335', '76b118ec-e00a-427d-987e-89f6969103e1', '788586ce-9557-4671-a865-29f195f55229', '3bc341dd-a33d-457e-956b-fe04c709f414', 'c11_physics', '09b2e473-b1a0-46bc-89fb-2da0c1c259e0', '283fa63a-284c-4721-bb74-45bb434788ae', '1465ba7f-e5b6-472f-b049-1d7790dea88d', 'eaf4915d-87d6-45d5-b5b5-cd8734444561', '4562cbf4-541e-42f5-b4cf-cfcf85bf2867', 'c8_maths', '9350cd3d-b924-4131-a490-d5633fc783a6', 'a3fff5bf-1e50-4660-a823-c46142e5124d', 'a3dfdae2-49b8-45d2-9206-35064c09521e']
+
+============================================================
+======= Step 6: Unity Connectivity & Port Discovery ========
+============================================================
+ℹ Understanding the Unity & Backend Architecture:
+  - The FastAPI server acts as a SERVER (listening on port 8000/8080 by default).
+  - The Unity VR application acts as a CLIENT. It connects to the backend server.
+  - The backend serves lesson manifests & C# scripts that reference prefabs.
+  - The Unity Client loads assets locally from its own Project folder.
+  - Therefore, the backend does not 'fetch' assets from Unity; Unity reads metadata from the backend.
+✔ FastAPI Server is ALREADY RUNNING on port 8000!
+ℹ Unity can connect right now to: ws://localhost:8000/ws/lesson
+✔ Unity Editor is currently RUNNING on this PC!
+ℹ Once you start your FastAPI backend server, the Unity client will be able to connect and fetch/compile assets instantly.
+
+============================================================
+================== Diagnostics Completed ===================
+============================================================
+If all critical checks passed, your backend is ready to run!
+To start the backend, run: 
+python main.py or uvicorn main:app --reload --port 8000
+============================================================
+
+(.venv) PS C:\Users\Dr Himangshu\Downloads\Teaching-Multi-Agent-System\Teaching-Multi-Agent-System> 

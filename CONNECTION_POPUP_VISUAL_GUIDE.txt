@@ -1,0 +1,416 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║           UNITY BACKEND CONNECTION STATUS POPUP - VISUAL GUIDE                  ║
+║                                                                                  ║
+║              Real-time Status Display for Backend Connectivity                   ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+═══════════════════════════════════════════════════════════════════════════════════
+WHAT YOU'LL SEE
+═══════════════════════════════════════════════════════════════════════════════════
+
+When you run your Unity game and interact with the backend, you'll see popups 
+appear in the TOP-CENTER of your screen like this:
+
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                                                                    │   │
+│  │    🔄 Connecting to Backend...                                   │   │
+│  │                                                                    │   │
+│  │   [YELLOW - Connecting State]                                    │   │
+│  │                                                                    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│                   [Waits while requesting...]                          │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                                                                    │   │
+│  │    ✅ Connected to http://localhost:8000                         │   │
+│  │                                                                    │   │
+│  │   [GREEN - Success]                                              │   │
+│  │   [Auto-hides in 5 seconds]                                      │   │
+│  │                                                                    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│                      OR                                                │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                                                                    │   │
+│  │    ❌ Disconnected from Backend                                  │   │
+│  │                                                                    │   │
+│  │   [RED - Error State]                                            │   │
+│  │   [Auto-hides in 5 seconds]                                      │   │
+│  │                                                                    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+└────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════════
+POPUP STATES & COLORS
+═══════════════════════════════════════════════════════════════════════════════════
+
+STATE 1: CONNECTING (YELLOW)
+───────────────────────────
+
+┌──────────────────────────────────────────┐
+│  🔄 Connecting to Backend...             │ ← Yellow/Orange Color
+│                                          │
+│  Appears when sending request            │
+│  Does NOT auto-hide (stays until done)   │
+└──────────────────────────────────────────┘
+
+Example triggers:
+  • User clicks "Create Student" button
+  • GenerateTeachingContent() called
+  • GenerateQuiz() called
+  • Any network request initiated
+
+
+STATE 2: CONNECTED (GREEN)
+──────────────────────────
+
+┌──────────────────────────────────────────┐
+│  ✅ Connected to http://localhost:8000   │ ← Green Color
+│                                          │
+│  Appears on successful connection        │
+│  Auto-hides in 5 seconds                 │
+└──────────────────────────────────────────┘
+
+Example triggers:
+  • Server health check passes
+  • Connection established
+
+
+STATE 3: ERROR (RED)
+───────────────────
+
+┌──────────────────────────────────────────┐
+│  ❌ Disconnected from Backend            │ ← Red Color
+│                                          │
+│  Appears when connection fails           │
+│  Auto-hides in 5 seconds                 │
+└──────────────────────────────────────────┘
+
+Example triggers:
+  • Cannot reach server (not running)
+  • Network error
+  • Request timeout
+  • HTTP error (404, 500, etc.)
+
+
+STATE 4: SUCCESS (GREEN)
+───────────────────────
+
+┌──────────────────────────────────────────┐
+│  ✓ Student 'John' Created                │ ← Green Color
+│  ✓ Lesson Generated: PROJECTILE_MOTION   │
+│  ✓ Quiz Generated: Atomic Structure      │
+│                                          │
+│  Auto-hides in 5 seconds                 │
+└──────────────────────────────────────────┘
+
+Example triggers:
+  • CreateStudent() succeeds
+  • GenerateTeachingContent() succeeds
+  • GenerateQuiz() succeeds
+  • Any successful operation
+
+
+STATE 5: WARNING (ORANGE)
+────────────────────────
+
+┌──────────────────────────────────────────┐
+│  ⚠️ No student ID. Create student first. │ ← Orange Color
+│  ⚠️ Session Reset                        │
+│                                          │
+│  Auto-hides in 5 seconds                 │
+└──────────────────────────────────────────┘
+
+Example triggers:
+  • Trying to generate lesson without student
+  • Session reset
+  • Non-critical issues
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+TYPICAL WORKFLOW WITH POPUPS
+═══════════════════════════════════════════════════════════════════════════════════
+
+User Action                          Popup Shows
+─────────────────────────────────────────────────────────────────────────────────
+
+1. Click "Create Student"
+                                    ↓ 🔄 Connecting to Backend...
+                                    ↓ (Yellow - waiting...)
+                                    ↓ 
+                                    → ✓ Student 'John' Created
+                                    ↓ (Green - auto-hides in 5s)
+
+2. Click "Generate Lesson"
+                                    ↓ 🔄 Connecting to Backend...
+                                    ↓ (Yellow - waiting...)
+                                    ↓
+                                    → ✓ Lesson Generated: MOTION
+                                    ↓ (Green - auto-hides in 5s)
+
+3. Click "Generate Quiz"
+                                    ↓ 🔄 Connecting to Backend...
+                                    ↓ (Yellow - waiting...)
+                                    ↓
+                                    → ✓ Quiz Generated: Atomic Structure
+                                    ↓ (Green - auto-hides in 5s)
+
+4. Network drops
+                                    ↓ ❌ Disconnected from Backend
+                                    ↓ (Red - auto-hides in 5s)
+
+5. Try another operation
+                                    ↓ 🔄 Connecting to Backend...
+                                    ↓ (Yellow - waiting...)
+                                    ↓
+                                    → ⚠️ Backend unreachable
+                                    ↓ (Red - auto-hides in 5s)
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+DIAGNOSTIC MODE (TESTING)
+═══════════════════════════════════════════════════════════════════════════════════
+
+Press 'D' Key (in game):
+  Shows/Hides diagnostic panel in top-left corner
+
+Diagnostic Panel shows:
+┌─────────────────────────────────┐
+│ BACKEND CONNECTION TEST         │
+│ ───────────────────────────────│
+│ Status: ✓ CONNECTED or          │
+│         ✗ DISCONNECTED          │
+│                                 │
+│ Student ID: ABC-123-XYZ         │
+│            (or "Not Set")       │
+│                                 │
+│ KEYBOARD SHORTCUTS:             │
+│ [H] Health Check                │
+│ [C] Create Student              │
+│ [Q] Generate Quiz               │
+│ [N] Generate Notes              │
+│ [M] Send Chat Query             │
+│ [D] Toggle Panel                │
+│                                 │
+│ RECENT EVENTS:                  │
+│ ✅ Server is healthy            │
+│ ✓ Student Created               │
+│ ✓ Content Generated             │
+│ ✅ Quiz Generated               │
+└─────────────────────────────────┘
+
+Quick Test Commands (in Diagnostic Mode):
+  • Press 'H' → Test health check
+  • Press 'C' → Create test student
+  • Press 'Q' → Generate test quiz
+  • Press 'N' → Generate test notes
+  • Press 'M' → Send test chat query
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+CONSOLE OUTPUT (Check Inspector Console)
+═══════════════════════════════════════════════════════════════════════════════════
+
+In your Unity Console, you'll see detailed logs:
+
+[14:23:45] ✓ Backend Connection: SUCCESS
+           └─ Server is responding
+
+[14:23:46] ✓ Student Created: 550e8400-e29b-41d4-a716-446655440000
+           └─ New student registered
+
+[14:23:47] ✓ Teaching content generated
+           └─ Lesson is ready for display
+
+[14:23:48] ✓ Quiz generated
+           └─ Quiz questions ready
+
+[14:23:49] ✓ Chat response received
+           └─ Answer available
+
+OR if error:
+
+[14:23:50] ✗ Backend Connection: FAILED
+           └─ Connection refused
+
+[14:23:51] ✗ HTTP 404: Endpoint not found
+           └─ Check URL or endpoint
+
+[14:23:52] ✗ HTTP 500: Internal Server Error
+           └─ Check backend logs
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+POPUP POSITION & APPEARANCE
+═══════════════════════════════════════════════════════════════════════════════════
+
+Display Location:
+  TOP-CENTER of screen
+  
+  ┌─────────────────────────────────────────────────────┐
+  │                                                     │
+  │  ┌──────────────────────────────────────────────┐  │  ← Popup appears here
+  │  │  Message goes here                           │  │  (Top-center)
+  │  └──────────────────────────────────────────────┘  │
+  │                                                     │
+  │                                                     │
+  │              [Your Game Screen]                    │
+  │                                                     │
+  │                                                     │
+  │                                                     │
+  │                                                     │
+  │                                                     │
+  └─────────────────────────────────────────────────────┘
+
+Size:
+  Width:  400 pixels (approximate)
+  Height: 80 pixels (approximate)
+  
+Appearance:
+  Background: Dark translucent box
+  Text: Large, bold, white text
+  Emojis: 🔄 🟢 🔴 🟡 ✅ ❌ ⚠️ for visual feedback
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+TROUBLESHOOTING GUIDE
+═══════════════════════════════════════════════════════════════════════════════════
+
+PROBLEM: Popup never appears
+────────────────────────────
+Check:
+  1. Is Canvas visible? (hierarchy panel)
+  2. Is ConnectionStatusPanel active?
+  3. Is StatusText child visible?
+  4. Is ConnectionStatusUI script attached?
+  5. Are references assigned in Inspector?
+
+Fix: Follow CONNECTION_POPUP_SETUP.txt again
+
+
+PROBLEM: Popup appears but text is invisible
+─────────────────────────────────────────────
+Check:
+  1. Is TextMeshPro text color WHITE?
+  2. Is font size large enough? (36+ recommended)
+  3. Is text alignment CENTER?
+  4. Is background transparent enough to see text?
+
+Fix: Adjust text color to white (255, 255, 255)
+
+
+PROBLEM: Popup stays forever (doesn't auto-hide)
+────────────────────────────────────────────────
+Check:
+  1. Auto Hide Time setting in Inspector
+  2. Is it set to 0? (0 = no auto-hide)
+
+Fix: Set Auto Hide Time to 5 (or your preference)
+
+
+PROBLEM: Server connected but operations fail
+──────────────────────────────────────────────
+Check:
+  1. FastAPI server running? (python main.py)
+  2. Correct server URL? (http://localhost:8000)
+  3. Student created before using lessons?
+  4. Check backend console for errors
+
+Fix: Restart server, create student first
+
+
+PROBLEM: Connection check shows red (disconnected)
+──────────────────────────────────────────────────
+Check:
+  1. FastAPI server running?
+     Terminal: python main.py
+  
+  2. Port 8000 accessible?
+     Browser: http://localhost:8000/docs
+  
+  3. Firewall blocking?
+     Windows Firewall: Allow Python port 8000
+  
+  4. Network connectivity?
+     Check ping: ping localhost
+
+Fix: Start FastAPI server, check firewall
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+FILES INCLUDED
+═══════════════════════════════════════════════════════════════════════════════════
+
+1. ConnectionStatusUI.cs
+   ├─ ConnectionStatusUI class (UI display)
+   └─ EnhancedVRBackendConnector class (connection with popups)
+
+2. BackendConnectionDiagnostic.cs
+   ├─ BackendConnectionDiagnostic (diagnostic panel)
+   ├─ QuickConnectionTest (auto-test on startup)
+   └─ ConnectionStatusLogger (event logging)
+
+3. CONNECTION_POPUP_SETUP.txt
+   └─ Detailed setup instructions
+
+4. UNITY_CONNECTION_CONFIG.txt
+   └─ API endpoints reference
+
+5. UNITY_QUICK_REFERENCE.txt
+   └─ Quick method reference
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+QUICK START AGAIN (TL;DR)
+═══════════════════════════════════════════════════════════════════════════════════
+
+1. Copy ConnectionStatusUI.cs → Assets/Scripts/
+
+2. In Unity:
+   - Create Canvas + Panel for status display
+   - Add ConnectionStatusUI script to panel
+   - Assign StatusText in Inspector
+   - Attach EnhancedVRBackendConnector to BackendManager
+   - Connect the status UI
+
+3. Test:
+   - Press Play
+   - Look at top-center for popup
+   - Check console for connection status
+
+4. Done! Popups show automatically ✅
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+EXPECTED BEHAVIOR
+═══════════════════════════════════════════════════════════════════════════════════
+
+✅ First Time (Backend Running):
+   Game Start → 🔄 Connecting... → ✅ Connected → Ready
+
+✅ Create Student:
+   Button Click → 🔄 Connecting... → ✓ Student Created → Ready
+
+✅ Generate Lesson:
+   Button Click → 🔄 Connecting... → ✓ Lesson Generated → Ready
+
+❌ Backend Not Running:
+   Game Start → 🔄 Connecting... → ❌ Disconnected → Error Message
+
+❌ Network Error:
+   Any Request → 🔄 Connecting... → ❌ Error → Check Connection
+
+✅ After Fix:
+   Retry → 🔄 Connecting... → ✅ Connected → Working Again
+
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+That's it! Your Unity game now has real-time backend connection feedback! 🎮✅
+
+═══════════════════════════════════════════════════════════════════════════════════

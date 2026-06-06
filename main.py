@@ -8,6 +8,11 @@ with the new multi-agent system for personalized VR teaching.
 import json
 import logging
 import os
+
+# --- FIX: Prevent google_genai from using an old/expired GOOGLE_API_KEY ---
+if "GOOGLE_API_KEY" in os.environ and "GEMINI_API_KEY" in os.environ:
+    os.environ.pop("GOOGLE_API_KEY")
+
 from typing import AsyncGenerator, List, Optional
 from unittest import main
 
@@ -16,6 +21,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -276,6 +282,7 @@ class ContentSearchRequest(BaseModel):
 # ============================================================================
 
 
+@app.post("/students/create", tags=["Students"])
 @app.post("/students", tags=["Students"])
 async def create_student(req: CreateStudentRequest):
     """Create a new student."""
@@ -401,6 +408,7 @@ async def start_teaching_session(req: StartSessionRequest):
     )
 
 
+@app.post("/teaching/generate-content", tags=["Teaching"])
 @app.post("/teach/content", tags=["Teaching"])
 async def get_teaching_content(req: TeachingContentRequest):
     """
@@ -436,6 +444,24 @@ async def get_teaching_content(req: TeachingContentRequest):
         sse_stream(generator),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+class SubmitResponseRequest(BaseModel):
+    student_id: str
+    lesson_id: str
+    response: str
+
+
+@app.post("/teaching/submit-response", tags=["Teaching"])
+async def submit_response(req: SubmitResponseRequest):
+    """Submit student response (compatibility endpoint)."""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "feedback": "Response received successfully by Multi-Agent backend.",
+            "score": 1.0,
+        },
     )
 
 
@@ -569,16 +595,25 @@ async def receive_telemetry(req: TelemetryRequest):
 
 
 @app.get("/ws-info", tags=["VR"])
-async def ws_info():
+async def ws_info(request: Request):
     """
     Returns the WebSocket URL for the lesson endpoint.
 
     ManifestReceiver.cs fetches this on startup so the server URL can be
     discovered without being hardcoded in the Unity scene.
     """
+    protocol = "wss" if request.url.scheme == "https" else "ws"
+    host = request.url.netloc
+    
+    # Replace wildcard binding address with localhost for clients connecting locally
+    if "0.0.0.0" in host:
+        host = host.replace("0.0.0.0", "localhost")
+        
+    websocket_url = f"{protocol}://{host}/ws/lesson"
+    
     return JSONResponse(
         content={
-            "websocket_url": "ws://0.0.0.0:8000/ws/lesson",
+            "websocket_url": websocket_url,
             "note": "Connect to this WebSocket to receive lesson manifests and send telemetry.",
         }
     )
@@ -589,6 +624,7 @@ async def ws_info():
 # ============================================================================
 
 
+@app.websocket("/ws/streaming")
 @app.websocket("/ws/lesson")
 async def lesson_websocket(websocket: WebSocket):
     """
@@ -621,6 +657,19 @@ async def lesson_websocket(websocket: WebSocket):
                 student_id = data.get("student_id", "")
                 topic_code = data.get("topic_code", "")
                 subject_code = data.get("subject_code", "PHY")
+
+                # Normalize subject code and topic code to align with curriculum and DB schemas
+                subject_code_lower = subject_code.lower().strip()
+                if subject_code_lower in ["phy", "physics"]:
+                    subject_code = "physics"
+                elif subject_code_lower in ["chem", "chemistry"]:
+                    subject_code = "chemistry"
+                elif subject_code_lower in ["math", "maths", "mathematics"]:
+                    subject_code = "maths"
+
+                topic_code_lower = topic_code.lower().strip()
+                if topic_code_lower in ["motion_speed", "motion", "speed"]:
+                    topic_code = "motion"
 
                 profile_result = await orchestrator.profile_agent.process(
                     {"action": "get_profile", "student_id": student_id}
@@ -751,6 +800,7 @@ async def ingest_pdf(req: Gen_TopicRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/gen/notes", response_model=Gen_NotesResponse, tags=["Legacy RAG"])
 @app.post("/gen_notes", response_model=Gen_NotesResponse, tags=["Legacy RAG"])
 async def gen_notes(req: Gen_NotesRequest):
     """Generate notes for a topic from Pinecone (Legacy)."""
@@ -781,6 +831,7 @@ async def chat_reset(req: ResetRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/gen/quiz", response_model=Gen_QuizResponse, tags=["Legacy RAG"])
 @app.post("/gen_quiz", response_model=Gen_QuizResponse, tags=["Legacy RAG"])
 async def gen_quiz(req: Gen_QuizRequest):
     """Generate quiz for a topic (Legacy - use /assessments/diagnostic instead)."""

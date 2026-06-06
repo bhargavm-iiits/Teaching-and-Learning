@@ -1,0 +1,612 @@
+================================================================================
+UNITY CONNECTION USAGE GUIDE & EXAMPLES
+================================================================================
+
+Quick Reference for Using VRBackendConnector in Your Unity Project
+
+================================================================================
+1. SETUP (ONE-TIME)
+================================================================================
+
+Step 1: Add Script to Unity
+────────────────────────────
+1. Copy VRBackendConnector.cs to: Assets/Scripts/
+2. In your scene, create an empty GameObject named "BackendManager"
+3. Add the VRBackendConnector component to it
+4. Adjust Server URL in inspector if not localhost
+
+Step 2: Access in Your Scripts
+──────────────────────────────
+public class GameController : MonoBehaviour
+{
+    private VRBackendConnector connector;
+    
+    void Start()
+    {
+        connector = FindObjectOfType<VRBackendConnector>();
+    }
+}
+
+================================================================================
+2. BASIC WORKFLOW EXAMPLE
+================================================================================
+
+Complete Example - Student Lesson Flow
+───────────────────────────────────────
+
+public class LessonManager : MonoBehaviour
+{
+    private VRBackendConnector connector;
+    
+    void Start()
+    {
+        connector = FindObjectOfType<VRBackendConnector>();
+        
+        // Subscribe to events
+        connector.OnStudentCreated += HandleStudentCreated;
+        connector.OnContentGenerated += HandleContentGenerated;
+        connector.OnResponseSubmitted += HandleResponseSubmitted;
+    }
+    
+    // ══════════════════════════════════════════════════════════════
+    // PHASE 1: Create Student
+    // ══════════════════════════════════════════════════════════════
+    public void StartLesson()
+    {
+        Debug.Log("Creating student...");
+        connector.CreateStudent(
+            name: "Alex Johnson",
+            email: "alex@school.com",
+            classNumber: 10
+        );
+    }
+    
+    void HandleStudentCreated(string response)
+    {
+        Debug.Log("Student created successfully!");
+        Debug.Log("Starting onboarding assessment...");
+        
+        // PHASE 2: Start Onboarding
+        StartOnboarding();
+    }
+    
+    // ══════════════════════════════════════════════════════════════
+    // PHASE 2: Onboarding Assessment
+    // ══════════════════════════════════════════════════════════════
+    void StartOnboarding()
+    {
+        Debug.Log("Starting onboarding...");
+        connector.StartOnboarding(
+            subjectCode: "PHYSICS",
+            topicCode: "MOTION"
+        );
+    }
+    
+    // ══════════════════════════════════════════════════════════════
+    // PHASE 3: Generate Teaching Content
+    // ══════════════════════════════════════════════════════════════
+    void HandleContentGenerated(string response)
+    {
+        Debug.Log("Content received!");
+        Debug.Log(response);
+        
+        // Parse the response to get VR script
+        // Execute script in your scene
+        
+        // Example: Display content to student
+        DisplayLessonContent(response);
+    }
+    
+    void DisplayLessonContent(string content)
+    {
+        // Convert response JSON to object
+        TeachingContentResponse lesson = JsonUtility.FromJson<TeachingContentResponse>(content);
+        
+        Debug.Log("Scene ID: " + lesson.scene_id);
+        Debug.Log("Lesson: " + lesson.lesson);
+        Debug.Log("VR Script: " + lesson.vr_script);
+        
+        // Generate your VR scene based on vr_script
+        GenerateVRScene(lesson);
+    }
+    
+    // ══════════════════════════════════════════════════════════════
+    // PHASE 4: Student Interaction
+    // ══════════════════════════════════════════════════════════════
+    public void OnStudentAnswer(string answer)
+    {
+        Debug.Log("Student answered: " + answer);
+        
+        // Submit response for evaluation
+        connector.SubmitStudentResponse(
+            lessonId: "lesson-001",
+            response: answer
+        );
+    }
+    
+    void HandleResponseSubmitted(string response)
+    {
+        Debug.Log("Response evaluated by backend:");
+        Debug.Log(response);
+        
+        // Get feedback and continue lesson
+        ContinueLesson(response);
+    }
+    
+    void ContinueLesson(string feedback)
+    {
+        // Display feedback to student
+        // Generate next content
+        connector.GenerateTeachingContent(
+            subjectCode: "PHYSICS",
+            topicCode: "MOTION"
+        );
+    }
+    
+    void GenerateVRScene(TeachingContentResponse lesson)
+    {
+        // Implementation: Parse vr_script and instantiate GameObjects
+        // Example: vr_script might contain:
+        // {
+        //   "objects": [
+        //     {"type": "sphere", "position": [0, 2, 5], "scale": 1.5},
+        //     {"type": "cube", "position": [2, 1, 3], "scale": 1}
+        //   ],
+        //   "animations": [...]
+        // }
+    }
+}
+
+================================================================================
+3. INDIVIDUAL FEATURE EXAMPLES
+================================================================================
+
+A. CREATE STUDENT
+─────────────────
+
+Simple:
+    connector.CreateStudent("John Doe", "", 10);
+
+With Email:
+    connector.CreateStudent("Alice Smith", "alice@school.com", 9);
+
+With Event Handling:
+    void CreateNewStudent()
+    {
+        connector.OnStudentCreated += (response) =>
+        {
+            Debug.Log("✓ Student created: " + response);
+            // Do something next
+        };
+        
+        connector.CreateStudent("Bob Wilson", "bob@school.com", 10);
+    }
+
+B. GENERATE TEACHING CONTENT
+────────────────────────────
+
+    public void TeachProjectileMotion()
+    {
+        connector.OnContentGenerated += (response) =>
+        {
+            Debug.Log("✓ Lesson generated");
+            var lesson = JsonUtility.FromJson<TeachingContentResponse>(response);
+            
+            // Create VR scene
+            DisplayScene(lesson.scene_id);
+            DisplayLesson(lesson.lesson);
+            ExecuteVRScript(lesson.vr_script);
+        };
+        
+        connector.GenerateTeachingContent("PHYSICS", "PROJECTILE_MOTION");
+    }
+
+C. QUIZ GENERATION
+──────────────────
+
+    public void GenerateQuiz()
+    {
+        connector.OnQuizGenerated += (response) =>
+        {
+            var quiz = JsonUtility.FromJson<QuizResponse>(response);
+            
+            // Display questions one by one
+            for (int i = 0; i < quiz.questions.Length; i++)
+            {
+                DisplayQuestion(quiz.questions[i], i);
+            }
+        };
+        
+        connector.GenerateQuiz("Atomic Structure", 10);
+    }
+
+D. NOTES GENERATION
+───────────────────
+
+    public void GetStudyNotes()
+    {
+        connector.OnNotesGenerated += (response) =>
+        {
+            var notes = JsonUtility.FromJson<NotesResponse>(response);
+            
+            // Display full notes
+            Debug.Log("Full Notes:\n" + notes.notes);
+            
+            // Display summary
+            Debug.Log("Summary:\n" + notes.summary);
+        };
+        
+        connector.GenerateNotes("Coordinate Geometry", 10);
+    }
+
+E. CHAT & RAG QUERIES
+─────────────────────
+
+    public void AskQuestion(string question)
+    {
+        connector.OnChatResponseReceived += (response) =>
+        {
+            var chatResponse = JsonUtility.FromJson<ChatResponse>(response);
+            
+            // Display answer
+            Debug.Log("Answer: " + chatResponse.answer);
+            
+            // Show sources (if any)
+            foreach (var source in chatResponse.sources)
+            {
+                Debug.Log("Source: " + source);
+            }
+        };
+        
+        connector.SendChatQuery("What is Newton's First Law?");
+    }
+
+F. ASSESSMENT SUBMISSION
+───────────────────────
+
+    public void SubmitAssessmentAnswers(List<string> studentAnswers)
+    {
+        connector.OnResponseSubmitted += (response) =>
+        {
+            Debug.Log("✓ Assessment evaluated");
+            Debug.Log(response);
+            
+            // Show results to student
+            ShowAssessmentResults(response);
+        };
+        
+        connector.SubmitStudentResponse("lesson-assessment-001", string.Join(",", studentAnswers));
+    }
+
+G. ERROR HANDLING
+─────────────────
+
+    void SetupErrorHandling()
+    {
+        connector.OnError += (error) =>
+        {
+            Debug.LogError("Backend Error: " + error);
+            
+            // Handle different error types
+            if (error.Contains("404"))
+            {
+                ShowMessage("Endpoint not found. Check server.");
+            }
+            else if (error.Contains("500"))
+            {
+                ShowMessage("Server error. Check backend logs.");
+            }
+            else if (error.Contains("timeout"))
+            {
+                ShowMessage("Connection timeout. Check network.");
+            }
+            else
+            {
+                ShowMessage("Error: " + error);
+            }
+        };
+    }
+
+================================================================================
+4. ADVANCED PATTERNS
+================================================================================
+
+Pattern 1: State Machine with Backend Calls
+────────────────────────────────────────────
+
+public enum LessonState { Idle, Onboarding, Teaching, Assessment, Complete }
+
+public class AdvancedLessonManager : MonoBehaviour
+{
+    private LessonState currentState = LessonState.Idle;
+    private VRBackendConnector connector;
+    
+    void Start()
+    {
+        connector = FindObjectOfType<VRBackendConnector>();
+        SetupStateTransitions();
+    }
+    
+    void SetupStateTransitions()
+    {
+        connector.OnStudentCreated += (_) => TransitionTo(LessonState.Onboarding);
+        connector.OnOnboardingStarted += (_) => TransitionTo(LessonState.Teaching);
+        connector.OnContentGenerated += (_) => HandleTeachingContent();
+        connector.OnResponseSubmitted += (_) => CheckIfComplete();
+    }
+    
+    void TransitionTo(LessonState newState)
+    {
+        Debug.Log($"State: {currentState} → {newState}");
+        currentState = newState;
+        HandleState();
+    }
+    
+    void HandleState()
+    {
+        switch (currentState)
+        {
+            case LessonState.Idle:
+                // Initialize
+                break;
+                
+            case LessonState.Onboarding:
+                connector.StartOnboarding("PHYSICS", "MOTION");
+                break;
+                
+            case LessonState.Teaching:
+                connector.GenerateTeachingContent("PHYSICS", "MOTION");
+                break;
+                
+            case LessonState.Assessment:
+                connector.GenerateQuiz("Projectile Motion", 10);
+                break;
+                
+            case LessonState.Complete:
+                Debug.Log("Lesson Complete!");
+                break;
+        }
+    }
+    
+    void HandleTeachingContent() { /* ... */ }
+    void CheckIfComplete() { /* ... */ }
+}
+
+Pattern 2: Async Content Loading
+─────────────────────────────────
+
+public class ContentLoader : MonoBehaviour
+{
+    private VRBackendConnector connector;
+    private Queue<System.Action> contentQueue = new Queue<System.Action>();
+    
+    void Start()
+    {
+        connector = FindObjectOfType<VRBackendConnector>();
+    }
+    
+    public void LoadContentSequentially(params string[] topics)
+    {
+        foreach (var topic in topics)
+        {
+            // Queue each content load
+            contentQueue.Enqueue(() => connector.GenerateTeachingContent("PHYSICS", topic));
+        }
+        
+        ProcessQueue();
+    }
+    
+    void ProcessQueue()
+    {
+        if (contentQueue.Count > 0)
+        {
+            var action = contentQueue.Dequeue();
+            
+            connector.OnContentGenerated += (_) =>
+            {
+                ProcessQueue(); // Next item
+            };
+            
+            action.Invoke();
+        }
+    }
+}
+
+Pattern 3: Reconnection with Retry
+───────────────────────────────────
+
+public class RobustConnector : MonoBehaviour
+{
+    private VRBackendConnector connector;
+    private int retryCount = 0;
+    private const int MAX_RETRIES = 3;
+    private const float RETRY_DELAY = 2f;
+    
+    void Start()
+    {
+        connector = FindObjectOfType<VRBackendConnector>();
+        connector.OnError += HandleConnectionError;
+    }
+    
+    void HandleConnectionError(string error)
+    {
+        if (retryCount < MAX_RETRIES)
+        {
+            retryCount++;
+            Debug.Log($"Retry {retryCount}/{MAX_RETRIES} in {RETRY_DELAY}s");
+            
+            Invoke("RetryConnection", RETRY_DELAY);
+        }
+        else
+        {
+            Debug.LogError("Max retries reached. Connection failed.");
+        }
+    }
+    
+    void RetryConnection()
+    {
+        connector.CheckServerHealth();
+    }
+}
+
+================================================================================
+5. UI INTEGRATION EXAMPLE
+================================================================================
+
+public class UIController : MonoBehaviour
+{
+    public InputField studentNameInput;
+    public Button createStudentButton;
+    public Button generateLessonButton;
+    public Text statusText;
+    
+    private VRBackendConnector connector;
+    
+    void Start()
+    {
+        connector = FindObjectOfType<VRBackendConnector>();
+        
+        // Setup button listeners
+        createStudentButton.onClick.AddListener(OnCreateStudentClicked);
+        generateLessonButton.onClick.AddListener(OnGenerateLessonClicked);
+        
+        // Setup connector events
+        connector.OnStudentCreated += (response) =>
+        {
+            statusText.text = "✓ Student Created";
+            generateLessonButton.interactable = true;
+        };
+        
+        connector.OnContentGenerated += (response) =>
+        {
+            statusText.text = "✓ Lesson Generated";
+        };
+        
+        connector.OnError += (error) =>
+        {
+            statusText.text = "✗ Error: " + error;
+            statusText.color = Color.red;
+        };
+    }
+    
+    void OnCreateStudentClicked()
+    {
+        string name = studentNameInput.text;
+        if (!string.IsNullOrEmpty(name))
+        {
+            statusText.text = "Creating student...";
+            statusText.color = Color.yellow;
+            
+            connector.CreateStudent(name, "", 10);
+        }
+    }
+    
+    void OnGenerateLessonClicked()
+    {
+        statusText.text = "Generating lesson...";
+        statusText.color = Color.yellow;
+        
+        connector.GenerateTeachingContent("PHYSICS", "MOTION");
+    }
+}
+
+================================================================================
+6. DEBUGGING TIPS
+================================================================================
+
+Enable Detailed Logging:
+─────────────────────────
+1. In VRBackendConnector, add these to Start():
+   Debug.unityLogger.logEnabled = true;
+   
+2. Check browser console at http://localhost:8000/docs for API errors
+
+Inspect Network Requests:
+─────────────────────────
+1. Use Fiddler or Charles Proxy to monitor HTTP calls
+2. Check request/response bodies
+3. Verify headers are correct
+
+Check Backend Logs:
+──────────────────
+Terminal running "python main.py" will show:
+- Request logs
+- Response times
+- Error messages
+
+Common Issues:
+──────────────
+1. "Connection Refused" → Server not running (python main.py)
+2. "JSON Serialization Error" → Data classes don't match API response
+3. "404 Not Found" → Wrong endpoint URL
+4. "CORS Error" → Should not happen, already configured
+
+Status Check Method:
+───────────────────
+void DebugStatus()
+{
+    connector.LogStatus();
+    connector.CheckServerHealth();
+}
+
+================================================================================
+7. REFERENCE - ALL METHODS
+================================================================================
+
+Student Management:
+  - CreateStudent(name, email, classNumber)
+  - SetStudentId(id)
+  - GetStudentId()
+
+Onboarding:
+  - StartOnboarding(subjectCode, topicCode)
+  - SubmitOnboardingResponse(assessmentId, responses)
+
+Teaching:
+  - GenerateTeachingContent(subjectCode, topicCode)
+  - SubmitStudentResponse(lessonId, response)
+
+Content Generation:
+  - GenerateQuiz(topic, classLevel)
+  - GenerateNotes(topic, classLevel)
+  - SendChatQuery(query)
+
+Utility:
+  - SetServerUrl(url)
+  - CheckServerHealth()
+  - ResetSession()
+  - IsConnected()
+  - LogStatus()
+
+Events (Subscribe to these):
+  - OnStudentCreated
+  - OnOnboardingStarted
+  - OnContentGenerated
+  - OnResponseSubmitted
+  - OnQuizGenerated
+  - OnNotesGenerated
+  - OnChatResponseReceived
+  - OnError
+
+================================================================================
+8. COMMON PITFALLS & SOLUTIONS
+================================================================================
+
+Pitfall 1: Calling methods before student creation
+Solution: Always create student first, then wait for OnStudentCreated event
+
+Pitfall 2: Not handling null responses
+Solution: Always check response.IsEmpty() before parsing
+
+Pitfall 3: UI becomes unresponsive during requests
+Solution: Use async/await or Coroutines (already implemented)
+
+Pitfall 4: Multiple simultaneous requests
+Solution: Queue requests or wait for completion before next call
+
+Pitfall 5: Forgot to add BackendManager to scene
+Solution: Create empty GameObject, add VRBackendConnector component
+
+================================================================================
+END OF USAGE GUIDE
+================================================================================

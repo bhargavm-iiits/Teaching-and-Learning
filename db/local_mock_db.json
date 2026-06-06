@@ -1,0 +1,66 @@
+{
+  "classes": [
+    {
+      "id": "c1000000-0000-0000-0000-000000000010",
+      "class_name": "Class 10",
+      "class_number": 10,
+      "description": "High School - Grade 10 (Board)",
+      "is_active": true
+    }
+  ],
+  "subjects": [
+    {
+      "id": "s1000000-0000-0000-0000-000000000001",
+      "class_id": "c1000000-0000-0000-0000-000000000010",
+      "subject_code": "physics",
+      "subject_name": "Physics",
+      "description": "Study of matter, energy, and their interactions",
+      "is_active": true
+    },
+    {
+      "id": "s1000000-0000-0000-0000-000000000002",
+      "class_id": "c1000000-0000-0000-0000-000000000010",
+      "subject_code": "chemistry",
+      "subject_name": "Chemistry",
+      "description": "Study of substances and their properties",
+      "is_active": true
+    },
+    {
+      "id": "s1000000-0000-0000-0000-000000000003",
+      "class_id": "c1000000-0000-0000-0000-000000000010",
+      "subject_code": "maths",
+      "subject_name": "Mathematics",
+      "description": "Study of numbers, quantities, and shapes",
+      "is_active": true
+    }
+  ],
+  "users": {
+    "test_student_123": {
+      "id": "test_student_123",
+      "name": "Test Student",
+      "class_id": null,
+      "email": "test@example.com",
+      "created_at": "2026-06-06T21:29:27.159039"
+    }
+  },
+  "learner_profiles": {
+    "test_student_123": {
+      "student_id": "test_student_123",
+      "name": "Test Student",
+      "learning_style": "visual+analogy",
+      "preferred_analogies": [
+        "sports",
+        "daily_life"
+      ],
+      "weak_topics": [],
+      "strong_topics": [],
+      "topic_knowledge": {},
+      "historical_mistakes": [],
+      "total_study_time_minutes": 0,
+      "updated_at": "2026-06-06T21:29:27.159039"
+    }
+  },
+  "assessments": {},
+  "topic_progress": {},
+  "misconceptions": {}
+}

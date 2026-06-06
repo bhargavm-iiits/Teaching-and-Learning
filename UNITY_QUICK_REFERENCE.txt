@@ -1,0 +1,261 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                   UNITY ↔ FASTAPI BACKEND QUICK REFERENCE                      ║
+║                        AI Personalized VR Teaching System                        ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+┌─ CONNECTION INFO ────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  Server URL:           http://localhost:8000                                    │
+│  API Docs:             http://localhost:8000/docs (Swagger UI)                  │
+│  WebSocket Endpoint:   ws://localhost:8000/ws/streaming                         │
+│                                                                                  │
+│  For Remote Server: Replace "localhost" with server IP address                  │
+│  Example: http://192.168.1.100:8000                                            │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ FILE SETUP ─────────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  1. Copy VRBackendConnector.cs to Assets/Scripts/                               │
+│  2. Create empty GameObject in scene, name it "BackendManager"                  │
+│  3. Attach VRBackendConnector script to BackendManager                          │
+│  4. Set Server URL in Inspector (default: http://localhost:8000)                │
+│  5. Done! Ready to use                                                          │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ BASIC USAGE ────────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  Get Reference:                                                                 │
+│    VRBackendConnector connector = FindObjectOfType<VRBackendConnector>();     │
+│                                                                                  │
+│  Create Student:                                                                │
+│    connector.CreateStudent("John Doe", "john@school.com", 10);                 │
+│                                                                                  │
+│  Generate Lesson:                                                               │
+│    connector.GenerateTeachingContent("PHYSICS", "MOTION");                     │
+│                                                                                  │
+│  Handle Response:                                                               │
+│    connector.OnContentGenerated += (response) => {                             │
+│        Debug.Log("Lesson ready: " + response);                                │
+│    };                                                                           │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ KEY METHODS ────────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  STUDENTS:                                                                      │
+│    CreateStudent(name, email, class)                                            │
+│    SetStudentId(id)                                                             │
+│    GetStudentId()                                                               │
+│                                                                                  │
+│  ONBOARDING:                                                                    │
+│    StartOnboarding(subjectCode, topicCode)                                      │
+│    SubmitOnboardingResponse(assessmentId, responses)                            │
+│                                                                                  │
+│  TEACHING:                                                                      │
+│    GenerateTeachingContent(subjectCode, topicCode)                              │
+│    SubmitStudentResponse(lessonId, response)                                    │
+│                                                                                  │
+│  CONTENT:                                                                       │
+│    GenerateQuiz(topic, classLevel)                                              │
+│    GenerateNotes(topic, classLevel)                                             │
+│    SendChatQuery(query)                                                         │
+│                                                                                  │
+│  UTILITY:                                                                       │
+│    CheckServerHealth()                                                          │
+│    SetServerUrl(url)                                                            │
+│    ResetSession()                                                               │
+│    IsConnected()                                                                │
+│    LogStatus()                                                                  │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ EVENTS ─────────────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  Subscribe to these to handle responses:                                        │
+│                                                                                  │
+│    OnStudentCreated          → Student registration complete                    │
+│    OnOnboardingStarted       → Onboarding assessment started                    │
+│    OnContentGenerated        → Teaching content ready                           │
+│    OnResponseSubmitted       → Student response evaluated                       │
+│    OnQuizGenerated           → Quiz questions ready                             │
+│    OnNotesGenerated          → Study notes ready                                │
+│    OnChatResponseReceived    → Chat response received                           │
+│    OnError                   → Error occurred                                   │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ COMPLETE WORKFLOW ──────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  Step 1: Create Student                                                         │
+│          └─ Call: CreateStudent("Name", "email@school.com", 10)               │
+│          └─ Wait for: OnStudentCreated                                         │
+│                                                                                  │
+│  Step 2: Start Onboarding                                                       │
+│          └─ Call: StartOnboarding("PHYSICS", "MOTION")                        │
+│          └─ Wait for: OnOnboardingStarted                                      │
+│                                                                                  │
+│  Step 3: Generate Lesson                                                        │
+│          └─ Call: GenerateTeachingContent("PHYSICS", "MOTION")               │
+│          └─ Wait for: OnContentGenerated                                       │
+│          └─ Parse response & build VR scene                                    │
+│                                                                                  │
+│  Step 4: Student Interacts                                                      │
+│          └─ Student answers/completes activity                                 │
+│          └─ Call: SubmitStudentResponse(lessonId, response)                  │
+│          └─ Wait for: OnResponseSubmitted                                      │
+│                                                                                  │
+│  Step 5: Assessment                                                             │
+│          └─ Call: GenerateQuiz("Topic", 10)                                   │
+│          └─ Wait for: OnQuizGenerated                                          │
+│                                                                                  │
+│  Step 6: Next Lesson (Loop back to Step 3)                                      │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ MINIMAL EXAMPLE ────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  public class MinimalExample : MonoBehaviour                                    │
+│  {                                                                              │
+│      void Start()                                                               │
+│      {                                                                          │
+│          var connector = FindObjectOfType<VRBackendConnector>();              │
+│                                                                                  │
+│          // Subscribe to get response                                           │
+│          connector.OnStudentCreated += PrintResponse;                          │
+│                                                                                  │
+│          // Create student                                                      │
+│          connector.CreateStudent("Alex", "alex@school.com", 10);              │
+│      }                                                                          │
+│                                                                                  │
+│      void PrintResponse(string response)                                        │
+│      {                                                                          │
+│          Debug.Log("Response: " + response);                                    │
+│      }                                                                          │
+│  }                                                                              │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ API ENDPOINTS ──────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  POST /students/create                    → Create new student                │
+│  POST /onboarding/start                   → Begin assessment                  │
+│  POST /onboarding/submit                  → Submit assessment                 │
+│  POST /teaching/generate-content          → Generate lesson                   │
+│  POST /teaching/submit-response           → Submit student response           │
+│  POST /gen/quiz                           → Generate quiz                     │
+│  POST /gen/notes                          → Generate notes                    │
+│  POST /chat                               → Send chat query                   │
+│  POST /evaluation/generate-exam           → Generate exam                     │
+│  GET  /evaluation/grade                   → Grade submission                  │
+│  WS   /ws/streaming                       → WebSocket streaming              │
+│                                                                                  │
+│  See UNITY_CONNECTION_CONFIG.txt for detailed endpoint documentation           │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ COMMON RESPONSE FORMAT ─────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  Student Creation Response:                                                     │
+│  {                                                                              │
+│    "student_id": "550e8400-e29b-41d4-a716-446655440000",                      │
+│    "message": "Student created successfully"                                    │
+│  }                                                                              │
+│                                                                                  │
+│  Teaching Content Response:                                                     │
+│  {                                                                              │
+│    "scene_id": "scene-001",                                                    │
+│    "lesson": "Projectile motion explained...",                                 │
+│    "vr_script": "{ ... VR scene definition ... }"                              │
+│  }                                                                              │
+│                                                                                  │
+│  Quiz Response:                                                                │
+│  {                                                                              │
+│    "questions": ["Q1...", "Q2...", ...],                                       │
+│    "answers": ["A1", "A2", ...]                                                │
+│  }                                                                              │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ ERROR HANDLING ─────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  connector.OnError += (error) => {                                             │
+│      Debug.LogError("Error: " + error);                                        │
+│                                                                                  │
+│      if (error.Contains("Connection refused"))                                 │
+│          Debug.Log("Make sure server is running: python main.py");            │
+│                                                                                  │
+│      if (error.Contains("404"))                                                │
+│          Debug.Log("Endpoint not found. Check URL.");                         │
+│                                                                                  │
+│      if (error.Contains("timeout"))                                            │
+│          Debug.Log("Connection timeout. Check network.");                     │
+│  };                                                                             │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ TROUBLESHOOTING ────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  ✗ Server connection refused                                                    │
+│    → Run: python main.py in terminal                                           │
+│                                                                                  │
+│  ✗ 404 Not Found                                                                │
+│    → Check endpoint URL and method (POST/GET)                                  │
+│    → Verify in Swagger UI: http://localhost:8000/docs                         │
+│                                                                                  │
+│  ✗ JSON parse error                                                             │
+│    → Ensure response data classes match API response format                    │
+│    → Check UNITY_CONNECTION_CONFIG.txt for correct format                     │
+│                                                                                  │
+│  ✗ CORS error (shouldn't happen)                                               │
+│    → Backend already has CORS enabled                                          │
+│    → Check browser console for details                                         │
+│                                                                                  │
+│  ✗ No response received                                                         │
+│    → Add timeout check to OnError                                              │
+│    → Ensure BackendManager is in scene                                         │
+│    → Check network connectivity                                                │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ TIPS & BEST PRACTICES ──────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  ✓ Always create student before other operations                               │
+│  ✓ Subscribe to OnError to handle failures gracefully                          │
+│  ✓ Use LogStatus() to debug connection issues                                  │
+│  ✓ Queue requests - avoid sending multiple simultaneous                        │
+│  ✓ Parse responses immediately in event handlers                               │
+│  ✓ Use state machines for complex workflows                                    │
+│  ✓ Test locally before deploying to remote server                              │
+│  ✓ Enable detailed logging during development                                  │
+│  ✓ Check backend logs for API errors                                           │
+│  ✓ Use Swagger UI to test endpoints manually first                             │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+QUICK START CHECKLIST:
+  ☐ Server running (python main.py)
+  ☐ VRBackendConnector.cs added to Assets/Scripts/
+  ☐ BackendManager GameObject created
+  ☐ VRBackendConnector attached to BackendManager
+  ☐ Can access FindObjectOfType<VRBackendConnector>()
+  ☐ CreateStudent() call working
+  ☐ OnStudentCreated event firing
+  ☐ Response data correctly parsed
+  ☐ Next method called on event
+  ☐ Full workflow tested end-to-end
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+📚 Files in Your Project:
+  • VRBackendConnector.cs          - Main Unity script (copy to Assets/Scripts/)
+  • UNITY_CONNECTION_CONFIG.txt    - Detailed endpoint documentation
+  • UNITY_USAGE_EXAMPLES.txt       - Code examples and patterns
+  • UNITY_QUICK_REFERENCE.txt      - This file (keep handy!)
+
+🔗 Links:
+  • API Docs: http://localhost:8000/docs
+  • Backend Source: main.py
+
+═══════════════════════════════════════════════════════════════════════════════════

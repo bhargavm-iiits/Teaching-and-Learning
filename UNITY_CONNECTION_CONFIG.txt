@@ -1,0 +1,559 @@
+================================================================================
+UNITY VR TEACHING SYSTEM - CONNECTION CONFIGURATION
+================================================================================
+
+PROJECT: AI-Driven Personalized VR Teaching System
+PURPOSE: Configuration for establishing connection between Unity VR Client 
+         and FastAPI Backend Server
+VERSION: 2.0.0
+DATE: 2026-06-03
+
+================================================================================
+1. SERVER CONFIGURATION
+================================================================================
+
+API Server URL:        http://localhost:8000
+API Server Host:       0.0.0.0
+API Server Port:       8000
+Protocol:              HTTP + WebSocket
+
+API Documentation:     http://localhost:8000/docs
+API ReDoc:            http://localhost:8000/redoc
+
+================================================================================
+2. CONNECTION TYPES
+================================================================================
+
+A) REST API (HTTP)
+   - Used for: Student creation, quiz generation, notes, assessments
+   - Method: POST/GET
+   - Headers: Content-Type: application/json
+   - Response: JSON
+   - Example: http://localhost:8000/students/create
+
+B) Server-Sent Events (SSE)
+   - Used for: Real-time lesson streaming
+   - Method: GET
+   - Headers: Accept: text/event-stream
+   - Response: Event stream
+
+C) WebSocket (WS)
+   - Used for: Real-time interactive communication
+   - Endpoint: ws://localhost:8000/ws/streaming
+   - Bidirectional communication
+
+================================================================================
+3. KEY ENDPOINTS FOR UNITY
+================================================================================
+
+STUDENT MANAGEMENT:
+POST   /students/create
+       Body: {"name": "string", "email": "string", "class_number": int}
+       Response: {"student_id": "string", "message": "string"}
+
+ONBOARDING:
+POST   /onboarding/start
+       Body: {"student_id": "string", "subject_code": "string", "topic_code": "string"}
+       Response: {"assessment_id": "string", "questions": [...]}
+
+POST   /onboarding/submit
+       Body: {"assessment_id": "string", "student_id": "string", "subject_code": "string", 
+              "topic_code": "string", "questions": [...], "responses": [...]}
+
+TEACHING CONTENT:
+POST   /teaching/generate-content
+       Body: {"student_id": "string", "subject_code": "string", "topic_code": "string"}
+       Response: {"scene_id": "string", "lesson": "string", "vr_script": "string"}
+
+POST   /teaching/submit-response
+       Body: {"student_id": "string", "lesson_id": "string", "response": "string"}
+       Response: {"feedback": "string", "score": float}
+
+EVALUATION:
+POST   /evaluation/generate-exam
+       Body: {"student_id": "string", "subject_code": "string", "topic_code": "string"}
+       Response: {"exam_id": "string", "questions": [...]}
+
+GET    /evaluation/grade?exam_id=&student_id=
+       Response: {"score": float, "feedback": "string", "remediation": "string"}
+
+QUIZ & NOTES:
+POST   /gen/quiz
+       Body: {"topic": "string", "class_level": int}
+       Response: {"questions": [...], "answers": [...]}
+
+POST   /gen/notes
+       Body: {"topic": "string", "class_level": int}
+       Response: {"notes": "string", "summary": "string"}
+
+CHAT/RAG:
+POST   /chat
+       Body: {"query": "string"}
+       Response: {"answer": "string", "sources": [...]}
+
+================================================================================
+4. UNITY C# CONNECTION EXAMPLE
+================================================================================
+
+Place this in your Unity project (Assets/Scripts/VRBackendConnector.cs):
+
+===== BEGIN C# CODE =====
+
+using UnityEngine;
+using UnityEngine.Networking;
+using System.Collections;
+using System;
+using Newtonsoft.Json;
+
+public class VRBackendConnector : MonoBehaviour
+{
+    private string baseUrl = "http://localhost:8000";
+    private string studentId;
+    
+    // Event delegates for callbacks
+    public delegate void OnResponseReceived(string response);
+    public event OnResponseReceived OnStudentCreated;
+    public event OnResponseReceived OnContentGenerated;
+    public event OnResponseReceived OnLessonComplete;
+
+    // ================================================================
+    // STUDENT CREATION
+    // ================================================================
+    public void CreateStudent(string name, string email, int classNumber)
+    {
+        StartCoroutine(CreateStudentCoroutine(name, email, classNumber));
+    }
+
+    private IEnumerator CreateStudentCoroutine(string name, string email, int classNumber)
+    {
+        var requestData = new
+        {
+            name = name,
+            email = email,
+            class_number = classNumber
+        };
+
+        string json = JsonConvert.SerializeObject(requestData);
+        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+
+        using (UnityWebRequest request = new UnityWebRequest($"{baseUrl}/students/create", "POST"))
+        {
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                var response = JsonConvert.DeserializeObject<StudentResponse>(request.downloadHandler.text);
+                studentId = response.student_id;
+                Debug.Log($"Student Created: {studentId}");
+                OnStudentCreated?.Invoke(response.message);
+            }
+            else
+            {
+                Debug.LogError($"Error creating student: {request.error}");
+            }
+        }
+    }
+
+    // ================================================================
+    // START ONBOARDING
+    // ================================================================
+    public void StartOnboarding(string subjectCode, string topicCode)
+    {
+        StartCoroutine(StartOnboardingCoroutine(subjectCode, topicCode));
+    }
+
+    private IEnumerator StartOnboardingCoroutine(string subjectCode, string topicCode)
+    {
+        var requestData = new
+        {
+            student_id = studentId,
+            subject_code = subjectCode,
+            topic_code = topicCode
+        };
+
+        string json = JsonConvert.SerializeObject(requestData);
+        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+
+        using (UnityWebRequest request = new UnityWebRequest($"{baseUrl}/onboarding/start", "POST"))
+        {
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                Debug.Log($"Onboarding started. Questions: {request.downloadHandler.text}");
+                OnContentGenerated?.Invoke(request.downloadHandler.text);
+            }
+            else
+            {
+                Debug.LogError($"Error starting onboarding: {request.error}");
+            }
+        }
+    }
+
+    // ================================================================
+    // GENERATE TEACHING CONTENT
+    // ================================================================
+    public void GenerateTeachingContent(string subjectCode, string topicCode)
+    {
+        StartCoroutine(GenerateTeachingContentCoroutine(subjectCode, topicCode));
+    }
+
+    private IEnumerator GenerateTeachingContentCoroutine(string subjectCode, string topicCode)
+    {
+        var requestData = new
+        {
+            student_id = studentId,
+            subject_code = subjectCode,
+            topic_code = topicCode
+        };
+
+        string json = JsonConvert.SerializeObject(requestData);
+        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+
+        using (UnityWebRequest request = new UnityWebRequest($"{baseUrl}/teaching/generate-content", "POST"))
+        {
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                var response = JsonConvert.DeserializeObject<TeachingContent>(request.downloadHandler.text);
+                Debug.Log($"Lesson generated. VR Script:\n{response.vr_script}");
+                
+                // Execute the generated VR script in your scene
+                ExecuteVRScript(response.vr_script);
+                OnContentGenerated?.Invoke(request.downloadHandler.text);
+            }
+            else
+            {
+                Debug.LogError($"Error generating content: {request.error}");
+            }
+        }
+    }
+
+    // ================================================================
+    // SUBMIT STUDENT RESPONSE
+    // ================================================================
+    public void SubmitResponse(string lessonId, string response)
+    {
+        StartCoroutine(SubmitResponseCoroutine(lessonId, response));
+    }
+
+    private IEnumerator SubmitResponseCoroutine(string lessonId, string response)
+    {
+        var requestData = new
+        {
+            student_id = studentId,
+            lesson_id = lessonId,
+            response = response
+        };
+
+        string json = JsonConvert.SerializeObject(requestData);
+        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+
+        using (UnityWebRequest request = new UnityWebRequest($"{baseUrl}/teaching/submit-response", "POST"))
+        {
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                Debug.Log($"Response submitted: {request.downloadHandler.text}");
+                OnLessonComplete?.Invoke(request.downloadHandler.text);
+            }
+            else
+            {
+                Debug.LogError($"Error submitting response: {request.error}");
+            }
+        }
+    }
+
+    // ================================================================
+    // GENERATE QUIZ
+    // ================================================================
+    public void GenerateQuiz(string topic, int classLevel)
+    {
+        StartCoroutine(GenerateQuizCoroutine(topic, classLevel));
+    }
+
+    private IEnumerator GenerateQuizCoroutine(string topic, int classLevel)
+    {
+        var requestData = new { topic = topic, class_level = classLevel };
+        string json = JsonConvert.SerializeObject(requestData);
+        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+
+        using (UnityWebRequest request = new UnityWebRequest($"{baseUrl}/gen/quiz", "POST"))
+        {
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                Debug.Log($"Quiz generated: {request.downloadHandler.text}");
+                OnContentGenerated?.Invoke(request.downloadHandler.text);
+            }
+            else
+            {
+                Debug.LogError($"Error generating quiz: {request.error}");
+            }
+        }
+    }
+
+    // ================================================================
+    // EXECUTE VR SCRIPT (Dynamically instantiate objects based on script)
+    // ================================================================
+    private void ExecuteVRScript(string vrScript)
+    {
+        // Parse the VR script and instantiate game objects accordingly
+        Debug.Log("Executing VR Script in scene...");
+        // Implementation depends on your VR script format
+    }
+
+    // ================================================================
+    // DATA CLASSES FOR SERIALIZATION
+    // ================================================================
+    [System.Serializable]
+    public class StudentResponse
+    {
+        public string student_id;
+        public string message;
+    }
+
+    [System.Serializable]
+    public class TeachingContent
+    {
+        public string scene_id;
+        public string lesson;
+        public string vr_script;
+    }
+
+    [System.Serializable]
+    public class OnboardingResponse
+    {
+        public string assessment_id;
+        public string[] questions;
+    }
+}
+
+===== END C# CODE =====
+
+================================================================================
+5. SETUP INSTRUCTIONS FOR UNITY
+================================================================================
+
+STEP 1: Import Required Package
+   - Download Newtonsoft.Json (Json.NET) NuGet package
+   - Add to Unity: Assets > Import Package > Custom Package
+   - Or use Unity's built-in JsonUtility if Json.NET is not available
+
+STEP 2: Create VRBackendConnector Script
+   - Create folder: Assets/Scripts
+   - Create file: VRBackendConnector.cs
+   - Paste the C# code above
+
+STEP 3: Create Manager GameObject
+   - In your scene, create an empty GameObject
+   - Name it "BackendManager"
+   - Attach VRBackendConnector script to it
+
+STEP 4: Usage Example in Your Game Script
+   ───────────────────────────────────────
+   
+   public class LessonManager : MonoBehaviour
+   {
+       private VRBackendConnector connector;
+
+       void Start()
+       {
+           connector = GetComponent<VRBackendConnector>();
+           
+           // Create student
+           connector.CreateStudent("John Doe", "john@example.com", 10);
+           
+           // Listen for response
+           connector.OnStudentCreated += HandleStudentCreated;
+       }
+
+       void HandleStudentCreated(string response)
+       {
+           Debug.Log("Student created: " + response);
+       }
+
+       public void StartLesson()
+       {
+           connector.GenerateTeachingContent("PHYSICS", "MOTION");
+       }
+   }
+
+================================================================================
+6. NETWORK REQUIREMENTS
+================================================================================
+
+- Ensure both machines are on the same network OR:
+- Change "localhost" to the actual IP of your server machine
+- Example: http://192.168.1.100:8000
+
+- For Development: Both on same machine (localhost:8000)
+- For Testing: Change to server IP address
+- For Production: Use domain name + HTTPS
+
+================================================================================
+7. TROUBLESHOOTING
+================================================================================
+
+Issue: Connection Refused (localhost:8000)
+Solution: Ensure FastAPI server is running
+   Command: python main.py
+   Check: http://localhost:8000/docs in browser
+
+Issue: CORS Error
+Solution: Already configured in main.py with allow_origins=["*"]
+   If issues persist, check browser console and backend logs
+
+Issue: WebSocket Connection Failed
+Solution: Ensure server supports WebSocket
+   Check: /ws/streaming endpoint in code
+
+Issue: JSON Serialization Error
+Solution: Use [System.Serializable] on all data classes
+   Install Newtonsoft.Json for advanced serialization
+
+Issue: 404 Not Found
+Solution: Verify endpoint URL matches backend routes
+   Check: http://localhost:8000/docs for available endpoints
+
+================================================================================
+8. REAL-TIME STREAMING WITH SERVER-SENT EVENTS (SSE)
+================================================================================
+
+For streaming lessons in real-time, use SSE:
+
+C# Example:
+───────────
+
+using System.Collections;
+using UnityEngine;
+
+public class StreamingConnector : MonoBehaviour
+{
+    public void StreamLesson(string lessonId)
+    {
+        StartCoroutine(StreamLessonCoroutine(lessonId));
+    }
+
+    private IEnumerator StreamLessonCoroutine(string lessonId)
+    {
+        using (var request = UnityWebRequest.Get($"http://localhost:8000/streaming/{lessonId}"))
+        {
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Accept", "text/event-stream");
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                // Parse SSE events
+                string[] events = request.downloadHandler.text.Split(new[] { "\n\n" }, System.StringSplitOptions.None);
+                foreach (string evt in events)
+                {
+                    if (evt.Contains("event:") && evt.Contains("data:"))
+                    {
+                        ProcessStreamEvent(evt);
+                    }
+                }
+            }
+        }
+    }
+
+    private void ProcessStreamEvent(string sseEvent)
+    {
+        Debug.Log("Received event: " + sseEvent);
+        // Parse and handle event
+    }
+}
+
+================================================================================
+9. FIREWALL SETTINGS
+================================================================================
+
+Windows Firewall:
+   - Allow Python through firewall
+   - Allow port 8000 (FastAPI)
+   - Check: Control Panel > Windows Defender Firewall > Allow App
+
+Linux/Mac:
+   - sudo ufw allow 8000
+   - Or disable for testing: sudo ufw disable
+
+================================================================================
+10. QUICK REFERENCE - CONNECTION CHECKLIST
+================================================================================
+
+☐ FastAPI server is running (python main.py)
+☐ Port 8000 is accessible
+☐ VRBackendConnector.cs added to Unity project
+☐ BackendManager GameObject created in scene
+☐ Network connectivity verified
+☐ Firewall allows connections
+☐ API endpoints tested via Swagger (http://localhost:8000/docs)
+☐ Json.NET package installed in Unity
+☐ Event listeners subscribed in your game scripts
+☐ Error handling implemented for network failures
+
+================================================================================
+11. SAMPLE WORKFLOW IN UNITY
+================================================================================
+
+1. Game Start
+   └─ Create Student (CreateStudent)
+   └─ Wait for OnStudentCreated event
+   
+2. Lesson Selection
+   └─ Start Onboarding (StartOnboarding)
+   └─ Wait for OnContentGenerated event
+   
+3. Lesson Display
+   └─ Generate Teaching Content (GenerateTeachingContent)
+   └─ ExecuteVRScript parses and displays content
+   
+4. Student Interaction
+   └─ Process student input/response
+   └─ Submit Response (SubmitResponse)
+   
+5. Assessment
+   └─ Generate Quiz (GenerateQuiz)
+   └─ Display results and feedback
+
+================================================================================
+CONTACT & SUPPORT
+================================================================================
+
+API Documentation: http://localhost:8000/docs
+API ReDoc: http://localhost:8000/redoc
+Backend Repository: Teaching-Multi-Agent-System
+
+For issues, check:
+- Backend logs: Terminal running "python main.py"
+- Browser console: F12 in any browser at localhost:8000/docs
+- Network tab: Inspect HTTP requests/responses
+
+================================================================================
+END OF CONFIGURATION
+================================================================================
